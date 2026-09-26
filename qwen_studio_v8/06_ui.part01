@@ -1,0 +1,68 @@
+ • {j['id']}", jobs_table()
+    except Exception as e:
+        raise gr.Error(str(e))
+
+def _refresh_job(job_id):
+    status,result,info=job_status_view(job_id)
+    return status,result,info,jobs_table()
+
+def _refresh_jobs():
+    return jobs_table()
+
+def _copy_latest_to_edit():
+    return latest_image()
+
+with gr.Blocks(title=UI_TITLE, theme=gr.themes.Soft(primary_hue='violet', neutral_hue='slate'), css=CUSTOM_CSS) as demo:
+    gr.HTML(f'<div id="hero"><h1>{UI_TITLE}</h1><p>{UI_SUBTITLE}</p></div>')
+
+    with gr.Row(equal_height=True):
+        with gr.Column(scale=3, elem_classes=['status-card']):
+            ready_status = gr.Textbox(label='État du moteur', value=_pretty_prepare_status(), lines=3, interactive=False)
+        with gr.Column(scale=1, min_width=150):
+            ready_refresh = gr.Button('↻ Actualiser', elem_classes=['secondary-btn'])
+            ready_prepare = gr.Button('⚡ Préparer', variant='primary', elem_classes=['primary-btn'])
+            ready_msg = gr.Textbox(label='Action', visible=False)
+
+    jobs_box = gr.Dataframe(
+        headers=['Job ID','Type','État','Créé','Mis à jour','Résultat','Erreur'],
+        value=jobs_table(), interactive=False, visible=False
+    )
+    ready_refresh.click(lambda: _pretty_prepare_status(), [], [ready_status])
+    ready_prepare.click(_prepare_now, [], [ready_msg, ready_status, jobs_box])
+
+    with gr.Tabs():
+        with gr.Tab('✨ Créer'):
+            with gr.Row():
+                with gr.Column(scale=5, elem_classes=['glass']):
+                    prompt=gr.Textbox(label='Décris ton image', lines=5, placeholder='Ex. Portrait cinématographique, lumière douce, peau réaliste…')
+                    with gr.Row():
+                        aspect=gr.Dropdown(list(ASPECTS.keys()), value='1:1', label='Format')
+                        steps=gr.Slider(10,50,value=25,step=1,label='Qualité / Steps')
+                    with gr.Accordion('Réglages avancés', open=False):
+                        with gr.Row():
+                            cfg=gr.Slider(1,8,value=1.0,step=.5,label='CFG')
+                            seed=gr.Number(value=-1,precision=0,label='Seed')
+                    btn=gr.Button('✨ Générer', variant='primary', elem_classes=['primary-btn'])
+                    gen_job=gr.Textbox(label='Job ID', visible=False)
+                    gen_submit_info=gr.Textbox(label='État', lines=2, interactive=False)
+                    gen_refresh=gr.Button('↻ Voir le résultat', elem_classes=['secondary-btn'])
+                    gen_status=gr.Textbox(label='Progression', lines=3, interactive=False)
+                with gr.Column(scale=6, elem_classes=['glass']):
+                    img=gr.Image(label='Résultat', type='filepath', elem_classes=['result-image'], height=520)
+                    info=gr.Textbox(label='Détails', lines=2, interactive=False, visible=False)
+            btn.click(_submit_gen,[prompt,aspect,steps,cfg,seed],[gen_job,gen_submit_info,jobs_box])
+            gen_refresh.click(_refresh_job,[gen_job],[gen_status,img,info,jobs_box])
+
+        with gr.Tab('✏️ Modifier'):
+            with gr.Row():
+                with gr.Column(scale=5, elem_classes=['glass']):
+                    edit_image=gr.Image(label='Image de référence',type='filepath',height=300)
+                    edit_latest=gr.Button('↙ Utiliser la dernière image', elem_classes=['secondary-btn'])
+                    edit_prompt=gr.Textbox(label='Modification souhaitée',lines=4,placeholder='Ex. Remplace le fond par une plage au coucher du soleil…')
+                    with gr.Row():
+                        e_aspect=gr.Dropdown(list(ASPECTS.keys()),value='1:1',label='Format')
+                        e_steps=gr.Slider(10,50,value=25,step=1,label='Steps')
+                    with gr.Accordion('Réglages avancés', open=False):
+                        with gr.Row():
+                            e_cfg=gr.Slider(1,8,value=3.0,step=.5,label='CFG')
+                            e_seed=gr.Number(value=-1,precision=0,label='Seed')
