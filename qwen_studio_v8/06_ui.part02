@@ -123,6 +123,11 @@
 
         with gr.Tab('🛠 Technique'):
             with gr.Column(elem_classes=['glass']):
+                tech_source_ref=gr.Textbox(
+                    label='Version / source GitHub',
+                    value=f"Qwen Studio {globals().get('QWEN_STUDIO_VERSION','8.6')} • {str(globals().get('QWEN_STUDIO_SOURCE_REF','main'))[:12]}",
+                    lines=1,interactive=False
+                )
                 tech_status=gr.Textbox(label='Bootstrap',value=bootstrap_status_text(),lines=8,interactive=False)
                 tech_refresh=gr.Button('↻ Actualiser', elem_classes=['secondary-btn'])
                 tech_jobs=gr.Dataframe(
