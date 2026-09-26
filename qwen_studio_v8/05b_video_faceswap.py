@@ -664,7 +664,7 @@ def video_face_swap(source_image,target_video,frame_stride=1,max_frames=0,keep_a
     )
     return out,info
 
-def submit_faceswap_video_job(src,video,frame_stride=1,max_frames=0,keep_audio=True,crf=17,preset='slow',detect_every=1,preview_seconds=0,backend='auto'):
+def submit_faceswap_video_job(src,video,frame_stride=1,max_frames=0,keep_audio=True,crf=17,preset='slow',detect_every=1,preview_seconds=0,backend='auto',preflight_seconds=0):
     if not src or not video:
         raise ValueError('Ajoute un visage source et une vidéo cible')
     temp=uuid.uuid4().hex[:8]
@@ -677,7 +677,31 @@ def submit_faceswap_video_job(src,video,frame_stride=1,max_frames=0,keep_audio=T
         'preset':str(preset),'detect_every':int(detect_every),
         'preview_seconds':int(preview_seconds or 0),
         'backend':str(backend or 'auto'),
+        'preflight_seconds':int(preflight_seconds or 0),
     })
+
+def restart_video_job(job_id):
+    if not job_id:
+        return 'Job ID vide'
+    j=load_job(job_id)
+    if not j:
+        return 'Job introuvable'
+    if j.get('type')!='faceswap_video':
+        return 'Ce job n’est pas un face swap vidéo'
+    if j.get('status')=='done':
+        return 'Ce job est déjà terminé'
+    _clear_cancel(job_id)
+    try:
+        os.remove(_pause_flag(job_id))
+    except Exception:
+        pass
+    j['status']='queued'
+    j['error']=''
+    j['info']='Reprise du job à partir des checkpoints existants…'
+    save_job(j)
+    with JOB_LOCK:
+        JOB_FUTURES[job_id]=JOB_EXECUTOR.submit(_execute_job,job_id)
+    return f'Job {job_id} relancé avec reprise checkpoints'
 
 def _format_video_status(job):
     status=f"{job.get('status','?')} — {job.get('updated_at','')}"
@@ -692,7 +716,7 @@ def job_status_video_view(job_id):
     j=load_job(job_id)
     if not j:
         return 'Job introuvable',None,''
-    return _format_video_status(j),j.get('result_path') or None,j.get('info') or ''
+    return _format_video_status(j),j.get('result_path') or j.get('preview_path') or None,j.get('info') or ''
 
 _ORIGINAL_EXECUTE_JOB=_execute_job
 
@@ -710,12 +734,28 @@ def _execute_job(job_id):
         job['progress_pct']=0.0
         save_job(job)
         p=job['payload']
+        preview_seconds=int(p.get('preview_seconds',0) or 0)
+        preflight_seconds=int(p.get('preflight_seconds',0) or 0)
+        if preview_seconds<=0 and preflight_seconds>0:
+            preview_path,preview_info=video_face_swap(
+                p['source'],p['video'],
+                p.get('frame_stride',1),0,
+                False,p.get('crf',17),
+                p.get('preset','slow'),p.get('detect_every',1),
+                preflight_seconds,job_id,p.get('backend','auto')
+            )
+            job=load_job(job_id) or job
+            job['preview_path']=preview_path
+            job['info']='Aperçu prêt. Rendu complet en cours…\n'+preview_info
+            save_job(job)
+            if _is_cancel_requested(job_id):
+                raise JobCancelled('Annulation demandée après l’aperçu.')
         result,info=video_face_swap(
             p['source'],p['video'],
             p.get('frame_stride',1),p.get('max_frames',0),
             p.get('keep_audio',True),p.get('crf',17),
             p.get('preset','slow'),p.get('detect_every',1),
-            p.get('preview_seconds',0),job_id,p.get('backend','auto')
+            preview_seconds,job_id,p.get('backend','auto')
         )
         job=load_job(job_id) or job
         job['status']='done'
