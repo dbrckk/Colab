@@ -6,12 +6,14 @@ on:
       - "qwen_studio_v8/**"
       - "Qwen_Image_2_1_Heretic_GGUF_Gradio_v8_PremiumUX.ipynb"
       - "scripts/validate_qwen_studio.py"
+      - "scripts/test_video_checkpoint.py"
       - ".github/workflows/qwen-studio-validate.yml"
   pull_request:
     paths:
       - "qwen_studio_v8/**"
       - "Qwen_Image_2_1_Heretic_GGUF_Gradio_v8_PremiumUX.ipynb"
       - "scripts/validate_qwen_studio.py"
+      - "scripts/test_video_checkpoint.py"
   workflow_dispatch:
 
 permissions:
