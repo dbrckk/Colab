@@ -75,7 +75,7 @@ GRADIO_ANALYTICS = False #@param {type:"boolean"}
 
 # v8 — UX
 UI_TITLE = "Qwen Studio — Heretic GGUF"
-UI_SUBTITLE = "Qwen-Image 2.1 • Heretic Q4_K_M • Gradio"
+UI_SUBTITLE = "Qwen-Image 2.1 • Heretic Q4_K_M • Image + Video Face Swap HQ"
 AUTO_REFRESH_SECONDS = 3 #@param {type:"integer"}
 
 
