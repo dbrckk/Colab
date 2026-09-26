@@ -194,6 +194,9 @@ VIDEO_FACE_SWAP_ANALYSIS_SAMPLE_FRAMES = 12 #@param {type:"integer"}
 VIDEO_FACE_SWAP_CACHE_MAX_AGE_HOURS = 24 #@param {type:"integer"}
 VIDEO_FACE_SWAP_CACHE_KEEP_RECENT = 3 #@param {type:"integer"}
 VIDEO_FACE_SWAP_AUTO_REFRESH = True #@param {type:"boolean"}
-VIDEO_FACEFUSION_AUTO_INSTALL_ON_HARD = False #@param {type:"boolean"}
+VIDEO_FACEFUSION_AUTO_INSTALL_ON_HARD = True #@param {type:"boolean"}
 
 VIDEO_FACE_SWAP_PREFLIGHT_SECONDS = 5 #@param {type:"integer"}
+
+VIDEO_FACE_SWAP_PERSIST_CHECKPOINTS = True #@param {type:"boolean"}
+VIDEO_FACE_SWAP_CHECKPOINT_EVERY = 120 #@param {type:"integer"}
