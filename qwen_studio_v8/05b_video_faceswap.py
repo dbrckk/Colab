@@ -1008,6 +1008,11 @@ def video_face_swap(source_image,target_video,frame_stride=1,max_frames=0,keep_a
     preset=str(preset or 'slow')
 
     resolved_backend=_resolve_video_backend(target_video,backend,job_id)
+    if job_id:
+        j=load_job(job_id)
+        if j:
+            j['resolved_backend']=resolved_backend
+            save_job(j)
     if resolved_backend=='facefusion-ultra':
         return run_facefusion_ultra(source_image,target_video,keep_audio,preview_seconds,job_id,target_face_position,reference_frame_number,reference_distance)
 
@@ -1256,6 +1261,14 @@ def restart_video_job(job_id):
 
 def _format_video_status(job):
     status=f"{job.get('status','?')} — {job.get('updated_at','')}"
+    backend=job.get('resolved_backend') or job.get('auto_upgraded_backend')
+    if backend:
+        status += f"\nBackend: {backend}"
+    ratio=job.get('preflight_protected_ratio')
+    if ratio is not None:
+        status += f"\nPréflight protégé: {float(ratio)*100:.1f}%"
+    if job.get('backend_reason'):
+        status += f"\nDécision: {job.get('backend_reason')}"
     total=int(job.get('progress_total') or 0)
     if total>0:
         status += f"\nProgression: {int(job.get('progress_current') or 0)}/{total} ({float(job.get('progress_pct') or 0):.2f}%)"
@@ -1304,6 +1317,10 @@ def _execute_job(job_id):
 
             full_backend=p.get('backend','auto')
             ratio=_preflight_protected_ratio(preview_info)
+            job=load_job(job_id) or job
+            job['preflight_protected_ratio']=ratio
+            job['preflight_info']=preview_info
+            save_job(job)
             if (
                 str(full_backend).lower()=='auto'
                 and ratio is not None
@@ -1319,6 +1336,11 @@ def _execute_job(job_id):
                     'bascule automatique vers FaceFusion Ultra pour le rendu complet.'
                 )
                 job['auto_upgraded_backend']='facefusion-ultra'
+                job['resolved_backend']='facefusion-ultra'
+                job['backend_reason']=(
+                    f'Préflight instable: {ratio*100:.1f}% de frames protégées '
+                    f'(seuil {float(VIDEO_FACE_SWAP_PREFLIGHT_MAX_PROTECTED_RATIO)*100:.1f}%).'
+                )
                 save_job(job)
 
             if _is_cancel_requested(job_id):
