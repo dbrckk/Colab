@@ -140,3 +140,20 @@ os.environ['HF_HUB_DOWNLOAD_TIMEOUT'] = '120'
 os.environ['HF_HUB_ETAG_TIMEOUT'] = '12'
 print('✅ Dépendances de démarrage prêtes.')
 print('ℹ️ Face Swap / ONNX restent différés au premier usage.')
+
+
+# v8.2 — face swap vidéo robuste
+VIDEO_FACE_SWAP_ENABLED = True #@param {type:"boolean"}
+VIDEO_FACE_SWAP_CRF = 17 #@param {type:"integer"}
+VIDEO_FACE_SWAP_PRESET = "slow" #@param ["medium", "slow", "slower"]
+VIDEO_FACE_SWAP_KEEP_AUDIO = True #@param {type:"boolean"}
+VIDEO_FACE_SWAP_FRAME_STRIDE = 1 #@param {type:"integer"}
+VIDEO_FACE_SWAP_MAX_FRAMES = 0 #@param {type:"integer"}
+VIDEO_FACE_SWAP_DETECT_EVERY = 1 #@param {type:"integer"}
+VIDEO_FACE_SWAP_STRICT_TRACKING = True #@param {type:"boolean"}
+VIDEO_FACE_SWAP_MIN_DET_SCORE = 0.55 #@param {type:"number"}
+VIDEO_FACE_SWAP_MIN_EMBED_SIM = 0.18 #@param {type:"number"}
+VIDEO_FACE_SWAP_MIN_IOU = 0.05 #@param {type:"number"}
+VIDEO_FACE_SWAP_AREA_RATIO_MIN = 0.45 #@param {type:"number"}
+VIDEO_FACE_SWAP_AREA_RATIO_MAX = 2.25 #@param {type:"number"}
+VIDEO_FACE_SWAP_SKIP_ON_OCCLUSION = True #@param {type:"boolean"}
