@@ -1,5 +1,5 @@
 # v8.6 — Face swap vidéo Ultra (tracking + bouche + checkpoints + progression)
-import os, subprocess, shutil, uuid, time, json, signal, tarfile, hashlib, threading, copy
+import os, subprocess, shutil, uuid, time, json, signal, tarfile, hashlib, threading, copy, re
 from pathlib import Path
 from fractions import Fraction
 
@@ -1215,6 +1215,21 @@ def submit_faceswap_video_job(src,video,frame_stride=1,max_frames=0,keep_audio=T
         'reference_distance':float(reference_distance or 0.30),
     })
 
+def _preflight_protected_ratio(info):
+    if not info:
+        return None
+    try:
+        m_swap=re.search(r'swap_nouveaux=(\d+)',str(info))
+        m_skip=re.search(r'protégées_nouvelles=(\d+)',str(info))
+        if not m_swap or not m_skip:
+            return None
+        swapped=int(m_swap.group(1))
+        skipped=int(m_skip.group(1))
+        total=swapped+skipped
+        return (skipped/total) if total>0 else None
+    except Exception:
+        return None
+
 def restart_video_job(job_id):
     if not job_id:
         return 'Job ID vide'
@@ -1286,14 +1301,36 @@ def _execute_job(job_id):
             job['preview_path']=preview_path
             job['info']='Aperçu prêt. Rendu complet en cours…\n'+preview_info
             save_job(job)
+
+            full_backend=p.get('backend','auto')
+            ratio=_preflight_protected_ratio(preview_info)
+            if (
+                str(full_backend).lower()=='auto'
+                and ratio is not None
+                and ratio>float(VIDEO_FACE_SWAP_PREFLIGHT_MAX_PROTECTED_RATIO)
+                and VIDEO_FACEFUSION_ENABLED
+            ):
+                full_backend='facefusion-ultra'
+                _clear_persistent_video_checkpoints(job_id)
+                shutil.rmtree(_video_job_dir(job_id),ignore_errors=True)
+                job=load_job(job_id) or job
+                job['info']=(
+                    f'Aperçu: {ratio*100:.1f}% de frames protégées → '
+                    'bascule automatique vers FaceFusion Ultra pour le rendu complet.'
+                )
+                job['auto_upgraded_backend']='facefusion-ultra'
+                save_job(job)
+
             if _is_cancel_requested(job_id):
                 raise JobCancelled('Annulation demandée après l’aperçu.')
+        else:
+            full_backend=p.get('backend','auto')
         result,info=video_face_swap(
             p['source'],p['video'],
             p.get('frame_stride',1),p.get('max_frames',0),
             p.get('keep_audio',True),p.get('crf',17),
             p.get('preset','slow'),p.get('detect_every',1),
-            preview_seconds,job_id,p.get('backend','auto'),
+            preview_seconds,job_id,full_backend,
             p.get('target_face_position',0),p.get('reference_frame_number',0),p.get('reference_distance',0.30)
         )
         job=load_job(job_id) or job
