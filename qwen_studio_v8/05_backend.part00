@@ -13,11 +13,12 @@ ASPECTS = {
     '9:16': (768, 1344),
 }
 
-for p in [OUTPUT_ROOT, os.path.join(ROOT,'jobs'), os.path.join(ROOT,'job_inputs')]:
+JOB_BASE = DRIVE_ROOT if USE_DRIVE else ROOT
+for p in [OUTPUT_ROOT, os.path.join(JOB_BASE,'jobs'), os.path.join(JOB_BASE,'job_inputs')]:
     os.makedirs(p, exist_ok=True)
-JOB_ROOT = os.path.join(ROOT, 'jobs')
+JOB_ROOT = os.path.join(JOB_BASE, 'jobs')
 JOB_STATE_ROOT = os.path.join(JOB_ROOT, 'state')
-JOB_INPUT_ROOT = os.path.join(ROOT, 'job_inputs')
+JOB_INPUT_ROOT = os.path.join(JOB_BASE, 'job_inputs')
 os.makedirs(JOB_STATE_ROOT, exist_ok=True)
 os.makedirs(JOB_INPUT_ROOT, exist_ok=True)
 
