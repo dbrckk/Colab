@@ -44,6 +44,9 @@ required_video = [
     "def _target_anchor_from_video(",
     "def _smooth_face_geometry(",
     "def _contiguous_checkpoint_segments(",
+    "talking_likely",
+    "auto_upgraded_backend",
+    "preflight_protected_ratio",
 ]
 for token in required_video:
     assert token in video, f"Missing video capability: {token}"
