@@ -742,7 +742,7 @@ def _encode_frames(frames_out,fps,target_video,out,keep_audio,crf,preset,preview
         shutil.copy2(video_only,out)
 
 def video_face_swap(source_image,target_video,frame_stride=1,max_frames=0,keep_audio=True,crf=17,preset='slow',detect_every=1,preview_seconds=0,job_id=None,backend='auto'):
-    import cv2
+    import cv2, math
     ensure_ffmpeg()
     frame_stride=max(1,int(frame_stride or 1))
     detect_every=max(1,int(detect_every or 1))
@@ -750,9 +750,11 @@ def video_face_swap(source_image,target_video,frame_stride=1,max_frames=0,keep_a
     preview_seconds=max(0,int(preview_seconds or 0))
     crf=max(10,min(30,int(crf or 17)))
     preset=str(preset or 'slow')
+
     resolved_backend=_resolve_video_backend(target_video,backend,job_id)
     if resolved_backend=='facefusion-ultra':
         return run_facefusion_ultra(source_image,target_video,keep_audio,preview_seconds,job_id)
+
     init_faceswap()
     mode=_choose_mode(target_video)
     if mode=='ultra':
@@ -766,134 +768,170 @@ def video_face_swap(source_image,target_video,frame_stride=1,max_frames=0,keep_a
     source_face=_largest(source_faces)
 
     work=_video_job_dir(job_id or ('video_'+uuid.uuid4().hex[:8]))
-    frames_in=os.path.join(work,'frames_in')
     frames_out=os.path.join(work,'frames_out')
-    os.makedirs(frames_in,exist_ok=True)
     os.makedirs(frames_out,exist_ok=True)
-    restored_checkpoint_end=_restore_video_checkpoints(job_id,frames_out)
 
     source_fps=_ffprobe_fps(target_video)
-    fps=max(1.0,source_fps/float(frame_stride))
+    output_fps=max(1.0,source_fps/float(frame_stride))
     width,height=_ffprobe_size(target_video)
+    checkpoint_every=max(1,int(VIDEO_FACE_SWAP_CHECKPOINT_EVERY or 120))
+    _ensure_video_disk_headroom(width,height,checkpoint_every)
 
-    if not list(Path(frames_in).glob('*.png')):
-        extract=['ffmpeg','-y','-i',target_video,'-vsync','0']
-        if frame_stride>1:
-            extract += ['-vf',f'select=not(mod(n\\,{frame_stride}))']
-        extract += [os.path.join(frames_in,'%08d.png')]
-        p=subprocess.run(extract,capture_output=True,text=True)
-        if p.returncode!=0:
-            raise RuntimeError('Extraction vidéo échouée:\n'+((p.stdout or '')+'\n'+(p.stderr or ''))[-4000:])
-
-    files=sorted(Path(frames_in).glob('*.png'))
+    cap=cv2.VideoCapture(str(target_video))
+    if not cap.isOpened():
+        raise RuntimeError('Impossible d’ouvrir la vidéo cible pour le traitement streaming.')
+    source_frame_count=max(0,int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0))
+    if source_frame_count>0:
+        total=max(1,int(math.ceil(source_frame_count/float(frame_stride))))
+    else:
+        duration=_ffprobe_duration(target_video)
+        total=max(1,int(math.ceil(duration*source_fps/float(frame_stride)))) if duration>0 else 1
     if preview_seconds>0:
-        files=files[:max(1,int(round(fps*preview_seconds)))]
+        total=min(total,max(1,int(round(output_fps*preview_seconds))))
     if max_frames>0:
-        files=files[:max_frames]
-    if not files:
-        raise RuntimeError('Aucune frame extraite')
+        total=min(total,max_frames)
 
-    total=len(files)
+    persisted_end=min(total,_latest_checkpoint_end(job_id))
+    local_indices=[]
+    for pth in Path(frames_out).glob('*.png'):
+        try:
+            idx=int(pth.stem)
+            if idx<=total:
+                local_indices.append(idx)
+        except Exception:
+            pass
+    local_end=max(local_indices) if local_indices else 0
+    resume_end=max(persisted_end,local_end)
+    restored_checkpoint_end=persisted_end
+
+    # Reprendre directement près de la première frame non calculée.
+    source_start=max(0,resume_end*frame_stride)
+    if source_start:
+        cap.set(cv2.CAP_PROP_POS_FRAMES,source_start)
+
+    selected_idx=resume_end
+    source_idx=source_start
     prev=None
     stable_after_occlusion=0
-    processed=swapped=skipped=resumed=0
+    processed=resume_end
+    swapped=0
+    skipped=0
+    resumed=resume_end
     started=time.time()
     progress_every=max(1,int(VIDEO_FACE_SWAP_PROGRESS_EVERY or 8))
+    last_checkpoint=persisted_end
 
-    checkpoint_every=max(1,int(VIDEO_FACE_SWAP_CHECKPOINT_EVERY or 120))
-    last_checkpoint=_latest_checkpoint_end(job_id)
+    if resume_end:
+        _update_job_progress(job_id,resume_end,total,'reprise',f'{resume_end} frame(s) déjà calculée(s)')
 
-    for idx,path in enumerate(files,1):
-        if _is_pause_requested(job_id):
-            _checkpoint_unsaved_frames(job_id,frames_out)
-        _wait_if_paused(job_id)
-        if _is_cancel_requested(job_id):
-            _checkpoint_unsaved_frames(job_id,frames_out)
-            raise JobCancelled('Annulation demandée par l’utilisateur.')
+    try:
+        while selected_idx<total:
+            ok,frame=cap.read()
+            if not ok or frame is None:
+                break
+            current_source_idx=source_idx
+            source_idx+=1
+            if current_source_idx % frame_stride != 0:
+                continue
 
-        out_frame=os.path.join(frames_out,f'{idx:08d}.png')
-        if VIDEO_FACE_SWAP_AUTO_RESUME and os.path.exists(out_frame) and os.path.getsize(out_frame)>1000:
-            resumed+=1
-            processed+=1
-            if idx%progress_every==0 or idx==total:
-                elapsed=max(0.001,time.time()-started)
-                speed=idx/elapsed
-                eta=max(0,int((total-idx)/max(speed,1e-6)))
-                _update_job_progress(job_id,idx,total,'reprise',f'ETA ~ {eta}s')
-            continue
+            idx=selected_idx+1
+            selected_idx=idx
 
-        frame=cv2.imread(str(path))
-        if frame is None:
-            skipped+=1
-            continue
-        original=frame.copy()
+            if _is_pause_requested(job_id):
+                _checkpoint_unsaved_frames(job_id,frames_out)
+            _wait_if_paused(job_id)
+            if _is_cancel_requested(job_id):
+                _checkpoint_unsaved_frames(job_id,frames_out)
+                raise JobCancelled('Annulation demandée par l’utilisateur.')
 
-        try:
-            faces=FS_APP.get(frame)
-        except Exception:
-            faces=[]
+            out_frame=os.path.join(frames_out,f'{idx:08d}.png')
+            if os.path.exists(out_frame) and os.path.getsize(out_frame)>1000:
+                processed=max(processed,idx)
+                resumed+=1
+                continue
 
-        face,sig=_select_face(faces,prev) if faces else (None,None)
-        bad=(face is None or sig is None)
-        if not bad and VIDEO_FACE_SWAP_SKIP_ON_OCCLUSION:
-            bad=_unstable(sig,prev)
+            original=frame.copy()
+            try:
+                faces=FS_APP.get(frame)
+            except Exception:
+                faces=[]
 
-        if bad:
-            stable_after_occlusion=0
-            result=original
-            skipped+=1
-        else:
-            stable_after_occlusion+=1
-            required=max(1,int(VIDEO_FACE_SWAP_RECOVERY_STABLE_FRAMES or 1))
-            if prev is not None and stable_after_occlusion<required:
+            face,sig=_select_face(faces,prev) if faces else (None,None)
+            bad=(face is None or sig is None)
+            if not bad and VIDEO_FACE_SWAP_SKIP_ON_OCCLUSION:
+                bad=_unstable(sig,prev)
+
+            if bad:
+                stable_after_occlusion=0
                 result=original
                 skipped+=1
             else:
-                try:
-                    swapped_frame=FS_SWAPPER.get(frame.copy(),face,source_face,paste_back=True)
-                    result=_post_blend_face(original,swapped_frame,sig)
-                    prev=sig
-                    swapped+=1
-                except Exception:
+                stable_after_occlusion+=1
+                required=max(1,int(VIDEO_FACE_SWAP_RECOVERY_STABLE_FRAMES or 1))
+                if prev is not None and stable_after_occlusion<required:
                     result=original
                     skipped+=1
-                    stable_after_occlusion=0
+                else:
+                    try:
+                        swapped_frame=FS_SWAPPER.get(frame.copy(),face,source_face,paste_back=True)
+                        result=_post_blend_face(original,swapped_frame,sig)
+                        prev=sig
+                        swapped+=1
+                    except Exception:
+                        result=original
+                        skipped+=1
+                        stable_after_occlusion=0
 
-        cv2.imwrite(out_frame,result)
-        processed+=1
+            cv2.imwrite(out_frame,result)
+            processed=max(processed,idx)
 
-        if VIDEO_FACE_SWAP_PERSIST_CHECKPOINTS and (idx-last_checkpoint)>=checkpoint_every:
-            _checkpoint_frames(job_id,frames_out,last_checkpoint+1,idx)
-            last_checkpoint=idx
+            if VIDEO_FACE_SWAP_PERSIST_CHECKPOINTS and (idx-last_checkpoint)>=checkpoint_every:
+                _checkpoint_frames(job_id,frames_out,last_checkpoint+1,idx)
+                last_checkpoint=idx
 
-        if idx%progress_every==0 or idx==total:
-            elapsed=max(0.001,time.time()-started)
-            speed=idx/elapsed
-            eta=max(0,int((total-idx)/max(speed,1e-6)))
-            _update_job_progress(
-                job_id,idx,total,'traitement vidéo',
-                f'ETA ~ {eta}s | mode={mode} | swap={swapped} | protégées={skipped}'
-            )
+            if idx%progress_every==0 or idx==total:
+                elapsed=max(0.001,time.time()-started)
+                newly_done=max(1,idx-resume_end)
+                speed=newly_done/elapsed
+                eta=max(0,int((total-idx)/max(speed,1e-6)))
+                _update_job_progress(
+                    job_id,idx,total,'traitement vidéo',
+                    f'ETA ~ {eta}s | backend={resolved_backend} | mode={mode} | swap={swapped} | protégées={skipped}'
+                )
+    finally:
+        cap.release()
+
+    if selected_idx<total:
+        total=selected_idx
+    if total<=0:
+        raise RuntimeError('Aucune frame vidéo n’a pu être traitée.')
 
     if VIDEO_FACE_SWAP_PERSIST_CHECKPOINTS and total>last_checkpoint:
         _checkpoint_frames(job_id,frames_out,last_checkpoint+1,total)
         last_checkpoint=total
 
     out=_new_output_video('faceswap_video_preview' if preview_seconds>0 else 'faceswap_video')
-    _encode_frames(frames_out,fps,target_video,out,keep_audio,crf,preset,preview_seconds)
+    if VIDEO_FACE_SWAP_PERSIST_CHECKPOINTS:
+        _encode_checkpoint_chunks(
+            job_id,output_fps,target_video,out,keep_audio,crf,preset,
+            preview_seconds,max_frame=total
+        )
+    else:
+        _encode_frames(frames_out,output_fps,target_video,out,keep_audio,crf,preset,preview_seconds)
 
     if VIDEO_FACE_SWAP_CLEANUP_TEMP and preview_seconds<=0:
-        shutil.rmtree(frames_in,ignore_errors=True)
         shutil.rmtree(frames_out,ignore_errors=True)
         _clear_persistent_video_checkpoints(job_id)
 
     info=(
-        f'Face swap vidéo terminé | backend={resolved_backend} | mode={mode} | {width}x{height} | fps={fps:.3f} | '
-        f'frames={processed} | swap={swapped} | protégées={skipped} | reprises={resumed} | checkpoint_restauré={restored_checkpoint_end} | '
-        f'stride={frame_stride} | detect_every={detect_every} | CRF={crf} | preset={preset} | '
-        f'preview={preview_seconds}s\n{out}'
+        f'Face swap vidéo terminé | backend={resolved_backend} | mode={mode} | {width}x{height} | '
+        f'fps_source={source_fps:.3f} | fps_sortie={output_fps:.3f} | frames={total} | '
+        f'swap_nouveaux={swapped} | protégées_nouvelles={skipped} | reprise={resume_end} | '
+        f'checkpoint_restauré={restored_checkpoint_end} | stride={frame_stride} | '
+        f'detect_every={detect_every} | CRF={crf} | preset={preset} | preview={preview_seconds}s\n{out}'
     )
     return out,info
+
 
 def submit_faceswap_video_job(src,video,frame_stride=1,max_frames=0,keep_audio=True,crf=17,preset='slow',detect_every=1,preview_seconds=0,backend='auto',preflight_seconds=0):
     if not src or not video:
