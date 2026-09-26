@@ -1,14 +1,17 @@
 # v8.4 — Face swap vidéo Ultra (tracking + bouche + checkpoints + progression)
-import os, subprocess, shutil, uuid, time, json, signal
+import os, subprocess, shutil, uuid, time, json, signal, tarfile
 from pathlib import Path
 from fractions import Fraction
 
 VIDEO_FACE_ROOT = os.path.join(ROOT, 'video_faceswap')
-VIDEO_JOB_ROOT = os.path.join(JOB_ROOT, 'video_artifacts')
+VIDEO_LOCAL_JOB_ROOT = os.path.join(ROOT, 'video_artifacts')
+VIDEO_CHECKPOINT_ROOT = os.path.join(JOB_ROOT, 'video_checkpoints')
+VIDEO_JOB_ROOT = VIDEO_LOCAL_JOB_ROOT
 VIDEO_CANCEL_ROOT = os.path.join(JOB_ROOT, 'cancel_flags')
 VIDEO_PAUSE_ROOT = os.path.join(JOB_ROOT, 'pause_flags')
 os.makedirs(VIDEO_FACE_ROOT, exist_ok=True)
-os.makedirs(VIDEO_JOB_ROOT, exist_ok=True)
+os.makedirs(VIDEO_LOCAL_JOB_ROOT, exist_ok=True)
+os.makedirs(VIDEO_CHECKPOINT_ROOT, exist_ok=True)
 os.makedirs(VIDEO_CANCEL_ROOT, exist_ok=True)
 os.makedirs(VIDEO_PAUSE_ROOT, exist_ok=True)
 
@@ -23,6 +26,93 @@ def _video_job_dir(job_id):
     p=os.path.join(VIDEO_JOB_ROOT,str(job_id))
     os.makedirs(p,exist_ok=True)
     return p
+
+def _video_checkpoint_dir(job_id):
+    p=os.path.join(VIDEO_CHECKPOINT_ROOT,str(job_id))
+    os.makedirs(p,exist_ok=True)
+    return p
+
+def _checkpoint_chunk_bounds(path):
+    name=Path(path).stem
+    try:
+        _,start,end=name.split('_',2)
+        return int(start),int(end)
+    except Exception:
+        return None
+
+def _restore_video_checkpoints(job_id,frames_out):
+    if not VIDEO_FACE_SWAP_PERSIST_CHECKPOINTS or not job_id:
+        return 0
+    checkpoint_dir=_video_checkpoint_dir(job_id)
+    restored=0
+    for archive in sorted(Path(checkpoint_dir).glob('chunk_*.tar')):
+        try:
+            with tarfile.open(archive,'r') as tf:
+                tf.extractall(frames_out)
+            bounds=_checkpoint_chunk_bounds(archive)
+            if bounds:
+                restored=max(restored,bounds[1])
+        except Exception:
+            continue
+    return restored
+
+def _latest_checkpoint_end(job_id):
+    if not VIDEO_FACE_SWAP_PERSIST_CHECKPOINTS or not job_id:
+        return 0
+    checkpoint_dir=_video_checkpoint_dir(job_id)
+    latest=0
+    for archive in Path(checkpoint_dir).glob('chunk_*.tar'):
+        bounds=_checkpoint_chunk_bounds(archive)
+        if bounds:
+            latest=max(latest,bounds[1])
+    return latest
+
+def _checkpoint_frames(job_id,frames_out,start_idx,end_idx):
+    if not VIDEO_FACE_SWAP_PERSIST_CHECKPOINTS or not job_id or end_idx<start_idx:
+        return
+    checkpoint_dir=_video_checkpoint_dir(job_id)
+    dest=os.path.join(checkpoint_dir,f'chunk_{int(start_idx):08d}_{int(end_idx):08d}.tar')
+    if os.path.exists(dest) and os.path.getsize(dest)>1024:
+        return
+    files=[]
+    for idx in range(int(start_idx),int(end_idx)+1):
+        p=os.path.join(frames_out,f'{idx:08d}.png')
+        if os.path.exists(p):
+            files.append((idx,p))
+    if not files:
+        return
+    tmp=dest+'.part'
+    try:
+        with tarfile.open(tmp,'w') as tf:
+            for idx,p in files:
+                tf.add(p,arcname=f'{idx:08d}.png',recursive=False)
+        os.replace(tmp,dest)
+    except Exception:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except Exception:
+            pass
+
+def _checkpoint_unsaved_frames(job_id,frames_out):
+    if not VIDEO_FACE_SWAP_PERSIST_CHECKPOINTS or not job_id:
+        return
+    latest=_latest_checkpoint_end(job_id)
+    existing=sorted(Path(frames_out).glob('*.png'))
+    indices=[]
+    for p in existing:
+        try:
+            indices.append(int(p.stem))
+        except Exception:
+            pass
+    indices=[i for i in indices if i>latest]
+    if indices:
+        _checkpoint_frames(job_id,frames_out,min(indices),max(indices))
+
+def _clear_persistent_video_checkpoints(job_id):
+    if not job_id:
+        return
+    shutil.rmtree(os.path.join(VIDEO_CHECKPOINT_ROOT,str(job_id)),ignore_errors=True)
 
 def _cancel_flag(job_id):
     return os.path.join(VIDEO_CANCEL_ROOT,f'{job_id}.flag')
@@ -139,16 +229,24 @@ def ensure_ffmpeg():
 def _ffprobe_fps(video_path):
     ensure_ffmpeg()
     p=subprocess.run(
-        ['ffprobe','-v','error','-select_streams','v:0','-show_entries','stream=r_frame_rate',
-         '-of','default=nokey=1:noprint_wrappers=1',video_path],
+        ['ffprobe','-v','error','-select_streams','v:0',
+         '-show_entries','stream=avg_frame_rate,r_frame_rate',
+         '-of','json',video_path],
         capture_output=True,text=True
     )
-    raw=(p.stdout or '').strip().splitlines()
-    val=raw[0].strip() if raw else '25/1'
     try:
-        return max(1.0,float(Fraction(val)))
+        data=json.loads(p.stdout or '{}')
+        streams=data.get('streams') or []
+        stream=streams[0] if streams else {}
+        for key in ('avg_frame_rate','r_frame_rate'):
+            val=str(stream.get(key) or '')
+            if val and val not in ('0/0','0'):
+                fps=float(Fraction(val))
+                if fps>0:
+                    return fps
     except Exception:
-        return 25.0
+        pass
+    return 25.0
 
 def _ffprobe_size(video_path):
     ensure_ffmpeg()
@@ -474,18 +572,19 @@ def analyze_video_difficulty(video_path):
 def cleanup_video_cache(max_age_hours=None,keep_recent=None):
     max_age=float(max_age_hours if max_age_hours is not None else VIDEO_FACE_SWAP_CACHE_MAX_AGE_HOURS)
     keep=int(keep_recent if keep_recent is not None else VIDEO_FACE_SWAP_CACHE_KEEP_RECENT)
-    dirs=[p for p in Path(VIDEO_JOB_ROOT).iterdir() if p.is_dir()] if os.path.isdir(VIDEO_JOB_ROOT) else []
-    dirs.sort(key=lambda p:p.stat().st_mtime,reverse=True)
     active={str(j.get('id')) for j in list_jobs(limit=500) if j.get('status') in ('queued','running','paused')}
     now=time.time()
     removed=0
-    for idx,p in enumerate(dirs):
-        if idx<keep or p.name in active:
-            continue
-        age_h=(now-p.stat().st_mtime)/3600.0
-        if age_h>=max_age:
-            shutil.rmtree(p,ignore_errors=True)
-            removed+=1
+    for root in (VIDEO_LOCAL_JOB_ROOT,VIDEO_CHECKPOINT_ROOT):
+        dirs=[p for p in Path(root).iterdir() if p.is_dir()] if os.path.isdir(root) else []
+        dirs.sort(key=lambda p:p.stat().st_mtime,reverse=True)
+        for idx,p in enumerate(dirs):
+            if idx<keep or p.name in active:
+                continue
+            age_h=(now-p.stat().st_mtime)/3600.0
+            if age_h>=max_age:
+                shutil.rmtree(p,ignore_errors=True)
+                removed+=1
     return f'Nettoyage terminé: {removed} dossier(s) vidéo supprimé(s).'
 
 def video_selftest_report():
@@ -516,11 +615,15 @@ def _encode_frames(frames_out,fps,target_video,out,keep_audio,crf,preset,preview
     if p.returncode!=0:
         raise RuntimeError('Encodage vidéo échoué:\n'+((p.stdout or '')+'\n'+(p.stderr or ''))[-4000:])
     if keep_audio and int(preview_seconds or 0)<=0:
-        mux=['ffmpeg','-y','-i',video_only,'-i',target_video,'-map','0:v:0','-map','1:a?',
-             '-c:v','copy','-c:a','copy','-shortest',out]
-        p=subprocess.run(mux,capture_output=True,text=True)
+        mux_copy=['ffmpeg','-y','-i',video_only,'-i',target_video,'-map','0:v:0','-map','1:a?',
+                  '-c:v','copy','-c:a','copy','-shortest',out]
+        p=subprocess.run(mux_copy,capture_output=True,text=True)
         if p.returncode!=0:
-            shutil.copy2(video_only,out)
+            mux_aac=['ffmpeg','-y','-i',video_only,'-i',target_video,'-map','0:v:0','-map','1:a?',
+                     '-c:v','copy','-c:a','aac','-b:a','192k','-shortest',out]
+            p=subprocess.run(mux_aac,capture_output=True,text=True)
+            if p.returncode!=0:
+                shutil.copy2(video_only,out)
     else:
         shutil.copy2(video_only,out)
 
@@ -557,7 +660,8 @@ def video_face_swap(source_image,target_video,frame_stride=1,max_frames=0,keep_a
     os.makedirs(frames_in,exist_ok=True)
     os.makedirs(frames_out,exist_ok=True)
 
-    fps=_ffprobe_fps(target_video)
+    source_fps=_ffprobe_fps(target_video)
+    fps=max(1.0,source_fps/float(frame_stride))
     width,height=_ffprobe_size(target_video)
 
     if not list(Path(frames_in).glob('*.png')):
@@ -584,9 +688,15 @@ def video_face_swap(source_image,target_video,frame_stride=1,max_frames=0,keep_a
     started=time.time()
     progress_every=max(1,int(VIDEO_FACE_SWAP_PROGRESS_EVERY or 8))
 
+    checkpoint_every=max(1,int(VIDEO_FACE_SWAP_CHECKPOINT_EVERY or 120))
+    last_checkpoint=_latest_checkpoint_end(job_id)
+
     for idx,path in enumerate(files,1):
+        if _is_pause_requested(job_id):
+            _checkpoint_unsaved_frames(job_id,frames_out)
         _wait_if_paused(job_id)
         if _is_cancel_requested(job_id):
+            _checkpoint_unsaved_frames(job_id,frames_out)
             raise JobCancelled('Annulation demandée par l’utilisateur.')
 
         out_frame=os.path.join(frames_out,f'{idx:08d}.png')
@@ -640,6 +750,10 @@ def video_face_swap(source_image,target_video,frame_stride=1,max_frames=0,keep_a
         cv2.imwrite(out_frame,result)
         processed+=1
 
+        if VIDEO_FACE_SWAP_PERSIST_CHECKPOINTS and (idx-last_checkpoint)>=checkpoint_every:
+            _checkpoint_frames(job_id,frames_out,last_checkpoint+1,idx)
+            last_checkpoint=idx
+
         if idx%progress_every==0 or idx==total:
             elapsed=max(0.001,time.time()-started)
             speed=idx/elapsed
@@ -649,12 +763,17 @@ def video_face_swap(source_image,target_video,frame_stride=1,max_frames=0,keep_a
                 f'ETA ~ {eta}s | mode={mode} | swap={swapped} | protégées={skipped}'
             )
 
+    if VIDEO_FACE_SWAP_PERSIST_CHECKPOINTS and total>last_checkpoint:
+        _checkpoint_frames(job_id,frames_out,last_checkpoint+1,total)
+        last_checkpoint=total
+
     out=_new_output_video('faceswap_video_preview' if preview_seconds>0 else 'faceswap_video')
     _encode_frames(frames_out,fps,target_video,out,keep_audio,crf,preset,preview_seconds)
 
     if VIDEO_FACE_SWAP_CLEANUP_TEMP and preview_seconds<=0:
         shutil.rmtree(frames_in,ignore_errors=True)
         shutil.rmtree(frames_out,ignore_errors=True)
+        _clear_persistent_video_checkpoints(job_id)
 
     info=(
         f'Face swap vidéo terminé | mode={mode} | {width}x{height} | fps={fps:.3f} | '
