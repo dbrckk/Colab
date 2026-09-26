@@ -1,0 +1,11 @@
+uniquement dans l’interface Gradio.
+demo.queue(default_concurrency_limit=4)
+demo.launch(
+    share=SHARE_GRADIO,
+    debug=False,
+    inline=False,
+    quiet=True,
+    prevent_thread_lock=True,
+    show_error=True,
+)
+print("✅ Gradio prêt — ouvre l’URL publique. Les images s’affichent uniquement dans Gradio.")
