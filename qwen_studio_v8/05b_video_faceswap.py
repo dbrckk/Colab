@@ -1,5 +1,5 @@
 # v8.6 — Face swap vidéo Ultra (tracking + bouche + checkpoints + progression)
-import os, subprocess, shutil, uuid, time, json, signal, tarfile, hashlib, threading
+import os, subprocess, shutil, uuid, time, json, signal, tarfile, hashlib, threading, copy
 from pathlib import Path
 from fractions import Fraction
 
@@ -398,33 +398,47 @@ def _sig(face):
         'kps':getattr(face,'kps',None),
     }
 
-def _select_face(faces,prev=None,target_face_position=0):
+def _select_face(faces,prev=None,target_face_position=0,anchor_embedding=None):
     if not faces:
         return None,None
-    if prev is None or not VIDEO_FACE_SWAP_STRICT_TRACKING:
+    if prev is None and anchor_embedding is None:
         ordered=sorted(faces,key=lambda f:_face_area(f),reverse=True)
         pos=max(0,min(int(target_face_position or 0),len(ordered)-1))
         f=ordered[pos]
         return f,_sig(f)
-    best=None; best_score=-1e9
-    px,py=prev['center']
+
+    best=None
+    best_score=-1e9
+    px,py=prev['center'] if prev is not None else (0.0,0.0)
     for f in faces:
         s=_sig(f)
+        det=s['det_score']
+        iou=_bbox_iou(s['bbox'],prev['bbox']) if prev is not None else 0.0
+        emb=_cosine(s['embedding'],prev['embedding']) if prev is not None else 0.0
+        anchor_sim=_cosine(s['embedding'],anchor_embedding) if anchor_embedding is not None else emb
         cx,cy=s['center']
-        drift=((cx-px)**2+(cy-py)**2)**0.5
-        iou=_bbox_iou(s['bbox'],prev['bbox'])
-        emb=_cosine(s['embedding'],prev['embedding'])
-        score=s['det_score']*2.0+iou*3.7+emb*3.2-drift*0.002
+        drift=((cx-px)**2+(cy-py)**2)**0.5 if prev is not None else 0.0
+        score=(
+            det*2.0
+            + iou*3.7
+            + emb*3.2
+            + anchor_sim*float(VIDEO_FACE_SWAP_ANCHOR_WEIGHT)
+            - drift*0.002
+        )
         if score>best_score:
             best_score=score
             best=(f,s)
     return best if best else (None,None)
 
-def _unstable(sig,prev):
+def _unstable(sig,prev,anchor_embedding=None):
     if sig is None:
         return True
     if sig['det_score'] < float(VIDEO_FACE_SWAP_MIN_DET_SCORE):
         return True
+    if anchor_embedding is not None:
+        target_sim=_cosine(sig['embedding'],anchor_embedding)
+        if target_sim<float(VIDEO_FACE_SWAP_MIN_TARGET_SIM):
+            return True
     if prev is None:
         return False
     ratio=sig['area']/max(1.0,prev['area'])
@@ -435,6 +449,39 @@ def _unstable(sig,prev):
     if iou<float(VIDEO_FACE_SWAP_MIN_IOU) and emb<float(VIDEO_FACE_SWAP_MIN_EMBED_SIM):
         return True
     return False
+
+def _smooth_face_geometry(face,sig,prev_sig):
+    if not VIDEO_FACE_SWAP_TEMPORAL_SMOOTHING or prev_sig is None:
+        return face,sig
+    try:
+        import numpy as np
+        alpha=float(VIDEO_FACE_SWAP_SMOOTHING_ALPHA)
+        alpha=max(0.5,min(0.98,alpha))
+        prev_kps=prev_sig.get('kps')
+        cur_kps=sig.get('kps')
+        if prev_kps is None or cur_kps is None:
+            return face,sig
+        prev_kps=np.asarray(prev_kps,dtype=np.float32)
+        cur_kps=np.asarray(cur_kps,dtype=np.float32)
+        if prev_kps.shape!=cur_kps.shape:
+            return face,sig
+
+        # Plus le visage se déplace vite, plus on suit la géométrie actuelle
+        # pour éviter un retard visible; à faible mouvement on lisse davantage.
+        px,py=prev_sig['center']
+        cx,cy=sig['center']
+        face_scale=max(1.0,(sig['area']**0.5))
+        motion=((cx-px)**2+(cy-py)**2)**0.5/face_scale
+        adaptive=min(0.95,max(alpha,alpha+motion*0.18))
+        smooth_kps=adaptive*cur_kps+(1.0-adaptive)*prev_kps
+
+        face2=copy.copy(face)
+        face2.kps=smooth_kps
+        sig2=dict(sig)
+        sig2['kps']=smooth_kps
+        return face2,sig2
+    except Exception:
+        return face,sig
 
 def _mouth_preserve(original,swapped,sig):
     import numpy as np, cv2
@@ -756,6 +803,8 @@ def video_selftest_report():
         tests.append(('Dossier checkpoints persistants',os.path.isdir(VIDEO_CHECKPOINT_ROOT)))
         tests.append(('Checksum checkpoints',callable(_checkpoint_is_valid)))
         tests.append(('Continuité checkpoints',callable(_contiguous_checkpoint_segments)))
+        tests.append(('Verrou identité',callable(_select_face)))
+        tests.append(('Lissage temporel',callable(_smooth_face_geometry)))
         tests.append(('FFmpeg ou installation lazy',bool(shutil.which('ffmpeg')) or True))
         tests.append(('FaceFusion config',bool(VIDEO_FACEFUSION_VERSION)))
     except Exception:
@@ -973,6 +1022,7 @@ def video_face_swap(source_image,target_video,frame_stride=1,max_frames=0,keep_a
     selected_idx=resume_end
     source_idx=source_start
     prev=None
+    anchor_embedding=None
     stable_after_occlusion=0
     processed=resume_end
     swapped=0
@@ -1017,10 +1067,10 @@ def video_face_swap(source_image,target_video,frame_stride=1,max_frames=0,keep_a
             except Exception:
                 faces=[]
 
-            face,sig=_select_face(faces,prev,target_face_position) if faces else (None,None)
+            face,sig=_select_face(faces,prev,target_face_position,anchor_embedding) if faces else (None,None)
             bad=(face is None or sig is None)
             if not bad and VIDEO_FACE_SWAP_SKIP_ON_OCCLUSION:
-                bad=_unstable(sig,prev)
+                bad=_unstable(sig,prev,anchor_embedding)
 
             if bad:
                 stable_after_occlusion=0
@@ -1034,8 +1084,11 @@ def video_face_swap(source_image,target_video,frame_stride=1,max_frames=0,keep_a
                     skipped+=1
                 else:
                     try:
+                        face,sig=_smooth_face_geometry(face,sig,prev)
                         swapped_frame=FS_SWAPPER.get(frame.copy(),face,source_face,paste_back=True)
                         result=_post_blend_face(original,swapped_frame,sig)
+                        if anchor_embedding is None and sig.get('embedding') is not None:
+                            anchor_embedding=copy.copy(sig.get('embedding'))
                         prev=sig
                         swapped+=1
                     except Exception:
