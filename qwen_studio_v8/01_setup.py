@@ -219,3 +219,9 @@ VIDEO_FACE_SWAP_AUTO_FACEFUSION_FOR_AUDIO = True #@param {type:"boolean"}
 VIDEO_FACE_SWAP_TARGET_FACE_POSITION = 0 #@param {type:"integer"}
 VIDEO_FACE_SWAP_REFERENCE_FRAME = 0 #@param {type:"integer"}
 VIDEO_FACE_SWAP_REFERENCE_DISTANCE = 0.30 #@param {type:"number"}
+
+# v8.6 — verrouillage d'identité temporel
+VIDEO_FACE_SWAP_MIN_TARGET_SIM = 0.22 #@param {type:"number"}
+VIDEO_FACE_SWAP_ANCHOR_WEIGHT = 4.5 #@param {type:"number"}
+VIDEO_FACE_SWAP_TEMPORAL_SMOOTHING = True #@param {type:"boolean"}
+VIDEO_FACE_SWAP_SMOOTHING_ALPHA = 0.72 #@param {type:"number"}
