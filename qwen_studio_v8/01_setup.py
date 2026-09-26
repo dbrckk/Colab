@@ -225,3 +225,8 @@ VIDEO_FACE_SWAP_MIN_TARGET_SIM = 0.22 #@param {type:"number"}
 VIDEO_FACE_SWAP_ANCHOR_WEIGHT = 4.5 #@param {type:"number"}
 VIDEO_FACE_SWAP_TEMPORAL_SMOOTHING = True #@param {type:"boolean"}
 VIDEO_FACE_SWAP_SMOOTHING_ALPHA = 0.72 #@param {type:"number"}
+
+# v8.6 — qualité d'encodage FaceFusion
+VIDEO_FACEFUSION_VIDEO_PRESET = "slow" #@param ["medium", "slow", "slower", "veryslow"]
+VIDEO_FACEFUSION_VIDEO_QUALITY = 95 #@param {type:"integer"}
+VIDEO_FACEFUSION_AUDIO_QUALITY = 95 #@param {type:"integer"}
