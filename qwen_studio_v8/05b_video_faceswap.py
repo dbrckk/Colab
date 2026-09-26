@@ -652,7 +652,7 @@ def _ensure_video_disk_headroom(width,height,chunk_frames):
             f'environ {required/1024**3:.1f} Go requis pour ce chunk.'
         )
 
-def _encode_checkpoint_chunks(job_id,fps,target_video,out,keep_audio,crf,preset,preview_seconds=0):
+def _encode_checkpoint_chunks(job_id,fps,target_video,out,keep_audio,crf,preset,preview_seconds=0,max_frame=0):
     checkpoint_dir=_video_checkpoint_dir(job_id)
     archives=sorted(
         [p for p in Path(checkpoint_dir).glob('chunk_*.tar') if _checkpoint_chunk_bounds(p)],
@@ -665,8 +665,16 @@ def _encode_checkpoint_chunks(job_id,fps,target_video,out,keep_audio,crf,preset,
     os.makedirs(encode_root,exist_ok=True)
     segment_paths=[]
     try:
-        for seg_idx,archive in enumerate(archives,1):
+        selected=[]
+        limit=max(0,int(max_frame or 0))
+        for archive in archives:
             start,end=_checkpoint_chunk_bounds(archive)
+            if limit and start>limit:
+                break
+            selected.append((archive,start,min(end,limit) if limit else end))
+        if not selected:
+            raise RuntimeError('Aucun checkpoint dans la plage demandée.')
+        for seg_idx,(archive,start,end) in enumerate(selected,1):
             seg_frames=os.path.join(encode_root,f'frames_{seg_idx:04d}')
             os.makedirs(seg_frames,exist_ok=True)
             with tarfile.open(archive,'r') as tf:
