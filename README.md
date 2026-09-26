@@ -9,8 +9,9 @@ Interface Gradio mobile-first pour Qwen-Image 2.1 avec le text encoder Heretic G
 - Qwen-Image 2.1
 - Heretic Q4_K_M
 - génération et édition d'image
-- face swap différé au premier usage
+- face swap image différé au premier usage
+- face swap vidéo HQ robuste avec suivi d'identité et protection anti-artefacts
 - jobs persistants
 - cache Google Drive
 - interface Gradio responsive
-- images affichées uniquement dans Gradio
+- images et vidéos affichées uniquement dans Gradio
