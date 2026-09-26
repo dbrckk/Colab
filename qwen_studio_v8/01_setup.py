@@ -214,3 +214,8 @@ VIDEO_FACEFUSION_CACHE_TAR = f"{VIDEO_FACEFUSION_CACHE_DIR}/facefusion_{VIDEO_FA
 # v8.6 — priorité qualité pour le choix automatique vidéo
 VIDEO_FACE_SWAP_AUTO_QUALITY_FIRST = True #@param {type:"boolean"}
 VIDEO_FACE_SWAP_AUTO_FACEFUSION_FOR_AUDIO = True #@param {type:"boolean"}
+
+# v8.6 — sélection du visage cible pour vidéos multi-personnes
+VIDEO_FACE_SWAP_TARGET_FACE_POSITION = 0 #@param {type:"integer"}
+VIDEO_FACE_SWAP_REFERENCE_FRAME = 0 #@param {type:"integer"}
+VIDEO_FACE_SWAP_REFERENCE_DISTANCE = 0.30 #@param {type:"number"}
