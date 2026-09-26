@@ -89,6 +89,37 @@ with tempfile.TemporaryDirectory() as td:
     segments = ns["_contiguous_checkpoint_segments"]("job2")
     assert segments and segments[-1][2] == 2
 
+    # Preflight quality parser.
+    ratio = ns["_preflight_protected_ratio"](
+        "swap_nouveaux=92 | protégées_nouvelles=8"
+    )
+    assert abs(ratio - 0.08) < 1e-9
+    assert ns["_preflight_protected_ratio"]("no metrics") is None
+
+    # Automatic backend resolver must respect explicit choice and analysis recommendation.
+    ns["VIDEO_FACEFUSION_ENABLED"] = True
+    ns["VIDEO_FACEFUSION_AUTO_INSTALL_ON_HARD"] = True
+    ns["analyze_video_difficulty"] = lambda _: ("hard", "facefusion-ultra")
+    ns["_facefusion_ready"] = lambda: False
+    assert ns["_resolve_video_backend"]("dummy.mp4", "builtin-ultra") == "builtin-ultra"
+    assert ns["_resolve_video_backend"]("dummy.mp4", "facefusion-ultra") == "facefusion-ultra"
+    assert ns["_resolve_video_backend"]("dummy.mp4", "auto") == "facefusion-ultra"
+
+    # UI status exposes backend and preflight quality decisions.
+    status = ns["_format_video_status"]({
+        "status": "running",
+        "updated_at": "now",
+        "resolved_backend": "facefusion-ultra",
+        "preflight_protected_ratio": 0.125,
+        "progress_total": 100,
+        "progress_current": 25,
+        "progress_pct": 25.0,
+        "error": "",
+    })
+    assert "Backend: facefusion-ultra" in status
+    assert "Préflight protégé: 12.5%" in status
+    assert "25/100" in status
+
     ns["JOB_EXECUTOR"].shutdown(wait=False)
 
 print("Video checkpoint runtime test passed.")
