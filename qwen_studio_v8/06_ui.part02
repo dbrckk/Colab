@@ -40,6 +40,8 @@
                     )
                     vfs_src=gr.Image(label='Visage source',type='filepath',height=250)
                     vfs_tgt=gr.Video(label='Vidéo cible',height=300)
+                    vfs_backend=gr.Dropdown(['auto','builtin-ultra','facefusion-ultra'],value='auto',label='Backend vidéo')
+                    gr.Markdown('`auto` utilise le moteur intégré, sauf si FaceFusion est déjà installé. `facefusion-ultra` installe son environnement séparé au premier usage.')
                     with gr.Accordion('Qualité / robustesse',open=False):
                         vfs_stride=gr.Slider(1,4,value=VIDEO_FACE_SWAP_FRAME_STRIDE,step=1,label='Frame stride • 1 recommandé')
                         vfs_detect_every=gr.Slider(1,5,value=VIDEO_FACE_SWAP_DETECT_EVERY,step=1,label='Détection tous les N frames • 1 recommandé')
@@ -62,12 +64,12 @@
                     vfs_info=gr.Textbox(label='Détails',lines=4,interactive=False)
             vfs_preview_btn.click(
                 _submit_video_preview,
-                [vfs_src,vfs_tgt,vfs_stride,vfs_keep_audio,vfs_crf,vfs_preset,vfs_detect_every],
+                [vfs_src,vfs_tgt,vfs_stride,vfs_keep_audio,vfs_crf,vfs_preset,vfs_detect_every,vfs_backend],
                 [vfs_job,vfs_submit_info,jobs_box]
             )
             vfs_btn.click(
                 _submit_video_fs,
-                [vfs_src,vfs_tgt,vfs_stride,vfs_max_frames,vfs_keep_audio,vfs_crf,vfs_preset,vfs_detect_every,vfs_preview_seconds],
+                [vfs_src,vfs_tgt,vfs_stride,vfs_max_frames,vfs_keep_audio,vfs_crf,vfs_preset,vfs_detect_every,vfs_preview_seconds,vfs_backend],
                 [vfs_job,vfs_submit_info,jobs_box]
             )
             vfs_cancel.click(_cancel_video_job,[vfs_job],[vfs_submit_info,jobs_box])
