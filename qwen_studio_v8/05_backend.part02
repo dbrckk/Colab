@@ -11,6 +11,7 @@ def _execute_job(job_id):
         return
     try:
         job['status']='running'
+        job['runtime_id']=QWEN_RUNTIME_ID
         save_job(job)
         p=job['payload']
         if job['type']=='generate':
@@ -75,7 +76,11 @@ def job_status_view(job_id):
 def recover_old_jobs():
     changed=0
     for j in list_jobs(limit=500):
-        if j.get('status') in ('queued','running'):
+        if j.get('status') in ('queued','running','paused'):
+            # Même runtime Python : une cellule a pu être relancée pendant qu'un
+            # ancien ThreadPoolExecutor travaille encore. Ne pas casser ce job.
+            if j.get('runtime_id') == QWEN_RUNTIME_ID:
+                continue
             j['status']='interrupted'
             j['error']=(j.get('error') or '') + '\nRuntime précédent interrompu.'
             save_job(j)
