@@ -15,3 +15,17 @@ Interface Gradio mobile-first pour Qwen-Image 2.1 avec le text encoder Heretic G
 - cache Google Drive
 - interface Gradio responsive
 - images et vidéos affichées uniquement dans Gradio
+
+
+## v8.4 — Video Face Swap Ultra
+
+- suivi strict du même visage
+- protections anti-occlusion et anti-glitch
+- préservation partielle de la bouche pendant la parole
+- aperçu rapide avant rendu complet
+- progression et ETA par frames
+- annulation de job
+- reprise depuis les frames déjà traitées
+- nettoyage automatique des fichiers temporaires
+- mode automatique rapide / ultra
+- conservation audio au rendu final
