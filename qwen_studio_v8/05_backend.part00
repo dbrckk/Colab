@@ -1,0 +1,123 @@
+# 7) Backend Gradio : Heretic GGUF + jobs persistants + génération + édition + face swap (v7.9)
+import os, time, random, subprocess, gc, json, shutil, threading, uuid, traceback
+from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+from PIL import Image
+
+ASPECTS = {
+    '1:1': (1024, 1024),
+    '4:3': (1152, 896),
+    '3:4': (896, 1152),
+    '16:9': (1344, 768),
+    '9:16': (768, 1344),
+}
+
+for p in [OUTPUT_ROOT, os.path.join(ROOT,'jobs'), os.path.join(ROOT,'job_inputs')]:
+    os.makedirs(p, exist_ok=True)
+JOB_ROOT = os.path.join(ROOT, 'jobs')
+JOB_STATE_ROOT = os.path.join(JOB_ROOT, 'state')
+JOB_INPUT_ROOT = os.path.join(ROOT, 'job_inputs')
+os.makedirs(JOB_STATE_ROOT, exist_ok=True)
+os.makedirs(JOB_INPUT_ROOT, exist_ok=True)
+
+JOB_EXECUTOR = ThreadPoolExecutor(max_workers=max(1, int(JOB_WORKERS)))
+JOB_LOCK = threading.Lock()
+JOB_FUTURES = {}
+
+
+def ensure_generation_stack_ready():
+    ensure_core_models_ready(verbose=False)
+    ensure_sdcli_ready(force=False)
+    return True
+
+
+def _seed(v):
+    try:
+        v=int(v)
+    except Exception:
+        v=-1
+    return random.randint(1, 2_000_000_000) if v < 0 else v
+
+
+def _new_output(prefix='gen'):
+    ts=time.strftime('%Y%m%d-%H%M%S')
+    return os.path.join(OUTPUT_ROOT, f'{ts}_{prefix}_{uuid.uuid4().hex[:6]}.png')
+
+
+def run_sd(prompt, aspect='1:1', steps=25, cfg=1.0, seed=-1, reference_image=None):
+    ensure_generation_stack_ready()
+    width, height = ASPECTS[aspect]
+    seed = _seed(seed)
+    out = _new_output('edit' if reference_image else 'gen')
+    cmd = [
+        SDCLI,
+        '--diffusion-model', DIT_PATH,
+        '--vae', VAE_PATH,
+        '--llm', HERETIC_PATH,
+        '-p', prompt,
+        '--cfg-scale', str(float(cfg)),
+        '--sampling-method', 'euler',
+        '--steps', str(int(steps)),
+        '--seed', str(seed),
+        '-W', str(width),
+        '-H', str(height),
+        '--offload-to-cpu',
+        '--diffusion-fa',
+        '-o', out,
+    ]
+    if reference_image:
+        cmd += ['--llm_vision', MMPROJ_PATH, '-r', str(reference_image)]
+    p = subprocess.run(cmd, text=True, capture_output=True)
+    log = (p.stdout or '') + '\n' + (p.stderr or '')
+    if p.returncode != 0 or not os.path.exists(out):
+        raise RuntimeError('sd-cli a échoué:\n' + log[-6000:])
+    return out, f'seed={seed} | {width}x{height} | steps={steps} | cfg={cfg}\n{out}'
+
+# Face swap
+FS_APP = None
+FS_SWAPPER = None
+_FS_DEPS_READY = False
+
+
+def _module_exists(name):
+    import importlib.util
+    return importlib.util.find_spec(name) is not None
+
+
+def _pip_live(packages, timeout=300, binary_only=True):
+    import sys, subprocess, time
+    if isinstance(packages, str):
+        packages=[packages]
+    cmd=[sys.executable,'-m','pip','install','--disable-pip-version-check','--no-input','--prefer-binary','--retries','2','--timeout','45']
+    if binary_only:
+        cmd += ['--only-binary=:all:']
+    cmd += list(packages)
+    p=subprocess.run(cmd, timeout=timeout)
+    if p.returncode != 0:
+        raise RuntimeError('Échec installation: ' + ' '.join(packages))
+
+
+def ensure_faceswap_python_deps():
+    global _FS_DEPS_READY
+    if _FS_DEPS_READY:
+        return
+    if not _module_exists('insightface'):
+        _pip_live(['insightface==2.0'], timeout=240, binary_only=True)
+    if not _module_exists('onnxruntime'):
+        if FACE_SWAP_GPU_RUNTIME:
+            try:
+                _pip_live(['onnxruntime-gpu==1.30.0'], timeout=420, binary_only=True)
+            except Exception:
+                _pip_live(['onnxruntime==1.30.0'], timeout=180, binary_only=True)
+        else:
+            _pip_live(['onnxruntime==1.30.0'], timeout=180, binary_only=True)
+    _FS_DEPS_READY = True
+
+
+def ensure_inswapper_model():
+    import requests
+    if os.path.exists(INSWAPPER) and os.path.getsize(INSWAPPER) > 10_000_000 and not FORCE_REDOWNLOAD:
+        return
+    urls=[
+        'https://huggingface.co/ezioruan/inswapper_128.onnx/resolve/main/inswapper_128.onnx',
+        'https://huggingface.co/Apac
