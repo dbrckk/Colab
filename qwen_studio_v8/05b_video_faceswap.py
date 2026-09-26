@@ -48,18 +48,40 @@ def _restore_video_checkpoints(job_id,frames_out):
     # lire les archives chunk par chunk pour économiser fortement le disque.
     return _latest_checkpoint_end(job_id)
 
-def _latest_checkpoint_end(job_id):
+def _valid_checkpoint_archives(job_id):
     if not VIDEO_FACE_SWAP_PERSIST_CHECKPOINTS or not job_id:
-        return 0
+        return []
     checkpoint_dir=_video_checkpoint_dir(job_id)
-    latest=0
+    items=[]
     for archive in Path(checkpoint_dir).glob('chunk_*.tar'):
-        if not _checkpoint_is_valid(archive):
-            continue
         bounds=_checkpoint_chunk_bounds(archive)
-        if bounds:
-            latest=max(latest,bounds[1])
-    return latest
+        if bounds and _checkpoint_is_valid(archive):
+            items.append((archive,bounds[0],bounds[1]))
+    items.sort(key=lambda x:(x[1],x[2]))
+    return items
+
+def _contiguous_checkpoint_segments(job_id,max_frame=0):
+    limit=max(0,int(max_frame or 0))
+    expected=1
+    selected=[]
+    for archive,start,end in _valid_checkpoint_archives(job_id):
+        if limit and expected>limit:
+            break
+        if end<expected:
+            continue
+        if start>expected:
+            break
+        seg_start=expected
+        seg_end=min(end,limit) if limit else end
+        if seg_end<seg_start:
+            continue
+        selected.append((archive,seg_start,seg_end))
+        expected=seg_end+1
+    return selected
+
+def _latest_checkpoint_end(job_id):
+    segments=_contiguous_checkpoint_segments(job_id)
+    return segments[-1][2] if segments else 0
 
 def _sha256_file(path,chunk_size=4*1024*1024):
     h=hashlib.sha256()
@@ -733,6 +755,7 @@ def video_selftest_report():
         tests.append(('Dossier local vidéo',os.path.isdir(VIDEO_LOCAL_JOB_ROOT)))
         tests.append(('Dossier checkpoints persistants',os.path.isdir(VIDEO_CHECKPOINT_ROOT)))
         tests.append(('Checksum checkpoints',callable(_checkpoint_is_valid)))
+        tests.append(('Continuité checkpoints',callable(_contiguous_checkpoint_segments)))
         tests.append(('FFmpeg ou installation lazy',bool(shutil.which('ffmpeg')) or True))
         tests.append(('FaceFusion config',bool(VIDEO_FACEFUSION_VERSION)))
     except Exception:
@@ -798,27 +821,20 @@ def _ensure_video_disk_headroom(width,height,chunk_frames):
         )
 
 def _encode_checkpoint_chunks(job_id,fps,target_video,out,keep_audio,crf,preset,preview_seconds=0,max_frame=0):
-    checkpoint_dir=_video_checkpoint_dir(job_id)
-    archives=sorted(
-        [p for p in Path(checkpoint_dir).glob('chunk_*.tar') if _checkpoint_chunk_bounds(p) and _checkpoint_is_valid(p)],
-        key=lambda p:_checkpoint_chunk_bounds(p)[0]
-    )
-    if not archives:
-        raise RuntimeError('Aucun checkpoint vidéo disponible pour l’encodage final.')
+    selected=_contiguous_checkpoint_segments(job_id,max_frame)
+    if not selected:
+        raise RuntimeError('Aucun checkpoint vidéo contigu disponible pour l’encodage final.')
+    limit=max(0,int(max_frame or 0))
+    if limit and selected[-1][2] < limit:
+        raise RuntimeError(
+            f'Checkpoints incomplets: frames 1-{selected[-1][2]} disponibles, '
+            f'mais 1-{limit} requises.'
+        )
     encode_root=os.path.join(_video_job_dir(job_id),'encode_chunks')
     shutil.rmtree(encode_root,ignore_errors=True)
     os.makedirs(encode_root,exist_ok=True)
     segment_paths=[]
     try:
-        selected=[]
-        limit=max(0,int(max_frame or 0))
-        for archive in archives:
-            start,end=_checkpoint_chunk_bounds(archive)
-            if limit and start>limit:
-                break
-            selected.append((archive,start,min(end,limit) if limit else end))
-        if not selected:
-            raise RuntimeError('Aucun checkpoint dans la plage demandée.')
         for seg_idx,(archive,start,end) in enumerate(selected,1):
             seg_frames=os.path.join(encode_root,f'frames_{seg_idx:04d}')
             os.makedirs(seg_frames,exist_ok=True)
