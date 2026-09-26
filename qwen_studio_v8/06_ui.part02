@@ -35,8 +35,8 @@
                     gr.Markdown(
                         "### Face swap vidéo Ultra v8.6\n"
                         "Suivi strict, garde-fous anti-occlusion, préservation de la bouche, "
-                        "FaceFusion Ultra optionnel, analyse automatique, checkpoints, pause/reprise, "
-                        "progression/ETA et annulation."
+                        "FaceFusion Ultra optionnel, analyse automatique de la difficulté et de la parole probable, "
+                        "checkpoints, pause/reprise, progression/ETA et annulation."
                     )
                     vfs_src=gr.Image(label='Visage source',type='filepath',height=250)
                     vfs_tgt=gr.Video(label='Vidéo cible',height=300)
@@ -56,7 +56,8 @@
                         )
                     vfs_analysis=gr.Textbox(label='Analyse / recommandation',lines=4,interactive=False)
                     gr.Markdown(
-                        '\`auto\` reste léger au démarrage. '
+                        '\`auto\` analyse la vidéo (détection, mouvement, multi-visages et mouvement de bouche) '
+                        'puis choisit le backend. '
                         '\`facefusion-ultra\` utilise son environnement séparé avec masques occlusion/région, '
                         'expression restorer et face enhancer.'
                     )
