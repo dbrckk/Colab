@@ -1,0 +1,108 @@
+# 8) Interface Gradio — Premium UX v8
+import os
+if not GRADIO_ANALYTICS:
+    os.environ['GRADIO_ANALYTICS_ENABLED'] = 'False'
+import gradio as gr
+
+CUSTOM_CSS = '''
+:root {
+  --app-bg: #070b14;
+  --panel: rgba(19, 27, 45, .82);
+  --panel-2: rgba(27, 37, 61, .76);
+  --border: rgba(148, 163, 184, .15);
+  --muted: #94a3b8;
+  --text: #f8fafc;
+}
+.gradio-container {
+  max-width: 1120px !important;
+  margin: 0 auto !important;
+  background:
+    radial-gradient(circle at 10% 0%, rgba(139,92,246,.17), transparent 34%),
+    radial-gradient(circle at 90% 8%, rgba(34,211,238,.10), transparent 28%),
+    var(--app-bg) !important;
+  color: var(--text) !important;
+  min-height: 100vh;
+  padding-bottom: 48px !important;
+}
+#hero {
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  padding: 22px 22px 18px;
+  margin: 12px 0 16px;
+  background: linear-gradient(135deg, rgba(139,92,246,.16), rgba(34,211,238,.06));
+  box-shadow: 0 16px 44px rgba(0,0,0,.24);
+}
+#hero h1 { margin: 0 0 5px; font-size: clamp(26px, 5vw, 38px); letter-spacing: -.7px; }
+#hero p { margin: 0; color: var(--muted); font-size: 14px; }
+.glass {
+  background: var(--panel) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 20px !important;
+  padding: 14px !important;
+  box-shadow: 0 12px 36px rgba(0,0,0,.18);
+}
+.status-card {
+  background: var(--panel-2) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 16px !important;
+}
+.primary-btn { min-height: 50px !important; font-weight: 750 !important; border-radius: 14px !important; }
+.secondary-btn { min-height: 44px !important; border-radius: 13px !important; }
+.result-image { min-height: 420px !important; border-radius: 18px !important; overflow: hidden !important; }
+.gradio-tabs { border: 0 !important; }
+.tab-nav { gap: 7px !important; padding: 7px !important; background: rgba(15,23,42,.75) !important; border-radius: 15px !important; }
+.tab-nav button { border-radius: 11px !important; font-weight: 650 !important; }
+textarea, input { border-radius: 12px !important; }
+footer { display: none !important; }
+@media (max-width: 720px) {
+  .gradio-container { padding-left: 9px !important; padding-right: 9px !important; }
+  #hero { border-radius: 18px; padding: 17px 15px 14px; }
+  .glass { padding: 10px !important; border-radius: 16px !important; }
+  .result-image { min-height: 330px !important; }
+  .tab-nav { overflow-x: auto !important; flex-wrap: nowrap !important; }
+  .tab-nav button { white-space: nowrap !important; min-width: max-content !important; }
+}
+'''
+
+def _pretty_prepare_status():
+    ready_models = bool(BOOTSTRAP_STATE.get('models_ready'))
+    ready_runtime = bool(BOOTSTRAP_STATE.get('runtime_ready'))
+    phase = BOOTSTRAP_STATE.get('phase','idle')
+    details = BOOTSTRAP_STATE.get('details','')
+    err = BOOTSTRAP_STATE.get('last_error','')
+    if ready_models and ready_runtime:
+        headline = '✅ Prêt à générer'
+    elif err:
+        headline = '⚠️ Préparation à vérifier'
+    else:
+        headline = '⏳ Préparation en cours'
+    lines = [headline, f'Phase : {phase}', details]
+    if err:
+        lines.append('Erreur : ' + err[-700:])
+    return '\n'.join(x for x in lines if x)
+
+def _prepare_now():
+    msg = start_background_prepare(force=True)
+    return msg, _pretty_prepare_status(), jobs_table()
+
+def _prepare_status():
+    return _pretty_prepare_status(), jobs_table()
+
+def _submit_gen(prompt, aspect, steps, cfg, seed):
+    try:
+        j=submit_generate_job(prompt,aspect,steps,cfg,seed)
+        return j['id'], f"Tâche lancée • {j['id']}", jobs_table()
+    except Exception as e:
+        raise gr.Error(str(e))
+
+def _submit_edit(prompt,image,aspect,steps,cfg,seed):
+    try:
+        j=submit_edit_job(prompt,image,aspect,steps,cfg,seed)
+        return j['id'], f"Édition lancée • {j['id']}", jobs_table()
+    except Exception as e:
+        raise gr.Error(str(e))
+
+def _submit_fs(src,tgt):
+    try:
+        j=submit_faceswap_job(src,tgt)
+        return j['id'], f"Face swap lancé
