@@ -1,4 +1,4 @@
-# v8.4 — Face swap vidéo Ultra (tracking + bouche + checkpoints + progression)
+# v8.6 — Face swap vidéo Ultra (tracking + bouche + checkpoints + progression)
 import os, subprocess, shutil, uuid, time, json, signal, tarfile, hashlib, threading
 from pathlib import Path
 from fractions import Fraction
@@ -313,6 +313,15 @@ def _ffprobe_size(video_path):
         return int(w),int(h)
     except Exception:
         return 0,0
+
+def _ffprobe_has_audio(video_path):
+    ensure_ffmpeg()
+    p=subprocess.run(
+        ['ffprobe','-v','error','-select_streams','a:0','-show_entries','stream=index',
+         '-of','default=nokey=1:noprint_wrappers=1',video_path],
+        capture_output=True,text=True
+    )
+    return p.returncode==0 and bool((p.stdout or '').strip())
 
 def _ffprobe_duration(video_path):
     ensure_ffmpeg()
@@ -734,6 +743,18 @@ def _resolve_video_backend(target_video,requested_backend='auto',job_id=None):
         return 'builtin-ultra'
     if not VIDEO_FACEFUSION_ENABLED:
         return 'builtin-ultra'
+    if (
+        VIDEO_FACE_SWAP_AUTO_QUALITY_FIRST
+        and VIDEO_FACE_SWAP_AUTO_FACEFUSION_FOR_AUDIO
+        and _ffprobe_has_audio(target_video)
+        and (_facefusion_ready() or VIDEO_FACEFUSION_AUTO_INSTALL_ON_HARD)
+    ):
+        j=load_job(job_id) if job_id else None
+        if j:
+            j['analysis']='Mode qualité: piste audio détectée → FaceFusion Ultra pour mieux préserver les expressions/paroles.'
+            j['info']=j['analysis']
+            save_job(j)
+        return 'facefusion-ultra'
     try:
         summary,recommended=analyze_video_difficulty(target_video)
         j=load_job(job_id) if job_id else None
@@ -1172,4 +1193,4 @@ def _video_selftest():
     return True
 
 _video_selftest()
-print('✅ Face swap vidéo Ultra chargé (v8.4).')
+print('✅ Face swap vidéo Ultra chargé (v8.6).')
