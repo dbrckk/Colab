@@ -1,0 +1,128 @@
+heOne/insightface/resolve/main/inswapper_128.onnx',
+    ]
+    last=None
+    for url in urls:
+        try:
+            r=requests.get(url, stream=True, timeout=(20,120)); r.raise_for_status()
+            tmp=INSWAPPER+'.part'
+            with open(tmp, 'wb') as f:
+                for chunk in r.iter_content(4*1024*1024):
+                    if chunk:
+                        f.write(chunk)
+            os.replace(tmp, INSWAPPER)
+            return
+        except Exception as e:
+            last=e
+    raise RuntimeError(f'Impossible de télécharger inswapper_128.onnx: {last}')
+
+
+def init_faceswap():
+    global FS_APP, FS_SWAPPER
+    if FS_APP is not None:
+        return
+    ensure_faceswap_python_deps()
+    ensure_inswapper_model()
+    import onnxruntime as ort
+    from insightface.app import FaceAnalysis
+    from insightface.model_zoo import get_model
+    avail=ort.get_available_providers()
+    providers=[p for p in ['CUDAExecutionProvider','CPUExecutionProvider'] if p in avail] or avail
+    root=os.path.join(MODEL_ROOT, 'insightface')
+    FS_APP=FaceAnalysis(name='buffalo_l', root=root, providers=providers)
+    FS_APP.prepare(ctx_id=0 if 'CUDAExecutionProvider' in providers else -1, det_size=(640,640))
+    FS_SWAPPER=get_model(INSWAPPER, providers=providers)
+
+
+def _largest(faces):
+    if not faces:
+        raise RuntimeError('Aucun visage détecté')
+    return sorted(faces, key=lambda f: (f.bbox[2]-f.bbox[0])*(f.bbox[3]-f.bbox[1]), reverse=True)[0]
+
+
+def face_swap(source, target):
+    import cv2
+    init_faceswap()
+    src=cv2.imread(source)
+    tgt=cv2.imread(target)
+    if src is None or tgt is None:
+        raise RuntimeError('Image source/cible illisible')
+    sf=_largest(FS_APP.get(src))
+    tf=_largest(FS_APP.get(tgt))
+    result=FS_SWAPPER.get(tgt.copy(), tf, sf, paste_back=True)
+    out=_new_output('faceswap')
+    cv2.imwrite(out, result)
+    return out, out
+
+
+def latest_image():
+    files=[p for p in Path(OUTPUT_ROOT).glob('*.png')]
+    if not files:
+        return None, 'Aucune image'
+    p=max(files, key=lambda x:x.stat().st_mtime)
+    return str(p), str(p)
+
+# ---------------- Jobs persistants ----------------
+def _job_file(job_id):
+    return Path(JOB_STATE_ROOT) / f'{job_id}.json'
+
+
+def _atomic_json_write(path, data):
+    path=Path(path)
+    tmp=path.with_suffix(path.suffix + '.tmp')
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+
+
+def save_job(job):
+    job['updated_at']=time.strftime('%Y-%m-%d %H:%M:%S')
+    _atomic_json_write(_job_file(job['id']), job)
+    return job
+
+
+def load_job(job_id):
+    if not job_id:
+        return None
+    p=_job_file(str(job_id).strip())
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text(encoding='utf-8'))
+    except Exception:
+        return None
+
+
+def list_jobs(limit=50):
+    jobs=[]
+    for p in Path(JOB_STATE_ROOT).glob('*.json'):
+        try:
+            jobs.append(json.loads(p.read_text(encoding='utf-8')))
+        except Exception:
+            pass
+    jobs.sort(key=lambda j:j.get('created_ts',0), reverse=True)
+    return jobs[:limit]
+
+
+def jobs_table(limit=50):
+    rows=[]
+    for j in list_jobs(limit):
+        rows.append([j.get('id',''), j.get('type',''), j.get('status',''), j.get('created_at',''), j.get('updated_at',''), j.get('result_path',''), (j.get('error','') or '')[-300:]])
+    return rows
+
+
+def _persist_uploaded_file(src, job_id, label):
+    if not src:
+        return None
+    src_path=Path(str(src))
+    if not src_path.exists():
+        raise FileNotFoundError(f'Fichier upload introuvable: {src}')
+    suffix=src_path.suffix or '.bin'
+    dst=Path(JOB_INPUT_ROOT) / f'{job_id}_{label}{suffix}'
+    shutil.copy2(src_path, dst)
+    return str(dst)
+
+
+def create_job(job_type, payload):
+    job_id=time.strftime('%Y%m%d%H%M%S') + '-' + uuid.uuid4().hex[:8]
+    now=time.strftime('%Y-%m-%d %H:%M:%S')
+    job={'id':job_id,'type':job_type,'status':'queued','cre
