@@ -27,3 +27,5 @@ jobs:
           python-version: "3.11"
       - name: Validate notebook modules
         run: python scripts/validate_qwen_studio.py
+      - name: Runtime checkpoint test
+        run: python scripts/test_video_checkpoint.py
