@@ -1,14 +1,16 @@
 # v8.4 — Face swap vidéo Ultra (tracking + bouche + checkpoints + progression)
-import os, subprocess, shutil, uuid, time, json
+import os, subprocess, shutil, uuid, time, json, signal
 from pathlib import Path
 from fractions import Fraction
 
 VIDEO_FACE_ROOT = os.path.join(ROOT, 'video_faceswap')
 VIDEO_JOB_ROOT = os.path.join(JOB_ROOT, 'video_artifacts')
 VIDEO_CANCEL_ROOT = os.path.join(JOB_ROOT, 'cancel_flags')
+VIDEO_PAUSE_ROOT = os.path.join(JOB_ROOT, 'pause_flags')
 os.makedirs(VIDEO_FACE_ROOT, exist_ok=True)
 os.makedirs(VIDEO_JOB_ROOT, exist_ok=True)
 os.makedirs(VIDEO_CANCEL_ROOT, exist_ok=True)
+os.makedirs(VIDEO_PAUSE_ROOT, exist_ok=True)
 
 class JobCancelled(Exception):
     pass
@@ -35,6 +37,70 @@ def cancel_job(job_id):
         j['info']=((j.get('info') or '')+'\nAnnulation demandée…').strip()
         save_job(j)
     return f'Annulation demandée pour {job_id}'
+
+def _pause_flag(job_id):
+    return os.path.join(VIDEO_PAUSE_ROOT,f'{job_id}.flag')
+
+def pause_job(job_id):
+    if not VIDEO_FACE_SWAP_PAUSE_ENABLED:
+        return 'Pause désactivée dans la configuration.'
+    if not job_id:
+        return 'Job ID vide'
+    with open(_pause_flag(job_id),'w',encoding='utf-8') as fh:
+        fh.write('pause')
+    j=load_job(job_id)
+    if j and j.get('status') in ('running','queued'):
+        j['status']='paused'
+        j['info']=((j.get('info') or '')+'\nPause demandée…').strip()
+        save_job(j)
+    return f'Pause demandée pour {job_id}'
+
+def resume_job(job_id):
+    if not job_id:
+        return 'Job ID vide'
+    try:
+        os.remove(_pause_flag(job_id))
+    except Exception:
+        pass
+    j=load_job(job_id)
+    if j and j.get('status')=='paused':
+        j['status']='running'
+        j['info']=((j.get('info') or '')+'\nReprise demandée…').strip()
+        save_job(j)
+    return f'Reprise demandée pour {job_id}'
+
+def _is_pause_requested(job_id):
+    return bool(job_id) and os.path.exists(_pause_flag(job_id))
+
+def _wait_if_paused(job_id, process=None):
+    if not VIDEO_FACE_SWAP_PAUSE_ENABLED or not job_id:
+        return
+    stopped=False
+    while _is_pause_requested(job_id):
+        if _is_cancel_requested(job_id):
+            if process is not None:
+                try: process.terminate()
+                except Exception: pass
+            raise JobCancelled('Annulation demandée pendant la pause.')
+        if process is not None and not stopped:
+            try:
+                os.kill(process.pid, signal.SIGSTOP)
+                stopped=True
+            except Exception:
+                stopped=False
+        j=load_job(job_id)
+        if j:
+            j['status']='paused'
+            j['info']='Job en pause — utilise Reprendre pour continuer.'
+            save_job(j)
+        time.sleep(0.4)
+    if process is not None and stopped:
+        try: os.kill(process.pid, signal.SIGCONT)
+        except Exception: pass
+    j=load_job(job_id)
+    if j and j.get('status')=='paused':
+        j['status']='running'
+        save_job(j)
 
 def _is_cancel_requested(job_id):
     return bool(job_id) and os.path.exists(_cancel_flag(job_id))
@@ -308,13 +374,19 @@ def run_facefusion_ultra(source_image,target_video,keep_audio=True,preview_secon
         text=True,bufsize=1,env=env
     )
     tail=[]
+    import select
     while True:
+        _wait_if_paused(job_id,proc)
         if _is_cancel_requested(job_id):
             proc.terminate()
             try: proc.wait(timeout=10)
             except Exception: proc.kill()
             raise JobCancelled('Annulation demandée pendant FaceFusion Ultra.')
-        line=proc.stdout.readline() if proc.stdout else ''
+        line=''
+        if proc.stdout:
+            ready,_,_=select.select([proc.stdout],[],[],0.25)
+            if ready:
+                line=proc.stdout.readline()
         if line:
             tail.append(line.rstrip())
             tail=tail[-60:]
@@ -324,12 +396,111 @@ def run_facefusion_ultra(source_image,target_video,keep_audio=True,preview_secon
                 save_job(j)
         if proc.poll() is not None:
             break
-        time.sleep(0.1)
+        time.sleep(0.05)
     rc=proc.wait()
     if rc!=0 or not os.path.exists(out):
         raise RuntimeError('FaceFusion Ultra a échoué:\n'+'\n'.join(tail[-25:]))
     _update_job_progress(job_id,1,1,'FaceFusion Ultra','terminé')
     return out, f'FaceFusion Ultra terminé | processors={processors} | masks={VIDEO_FACEFUSION_MASK_TYPES}\n{out}'
+
+def analyze_video_difficulty(video_path):
+    import cv2, math
+    if not video_path:
+        return 'Ajoute une vidéo à analyser.', 'builtin-ultra'
+    init_faceswap()
+    cap=cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return 'Vidéo illisible.', 'builtin-ultra'
+    frame_count=max(1,int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 1))
+    samples=max(4,min(32,int(VIDEO_FACE_SWAP_ANALYSIS_SAMPLE_FRAMES or 12)))
+    positions=[int(i*(frame_count-1)/max(1,samples-1)) for i in range(samples)]
+    detected=multi=0
+    scores=[]; area_ratios=[]; motions=[]
+    prev_center=None
+    width=max(1.0,float(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 1))
+    height=max(1.0,float(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 1))
+    diag=max(1.0,math.hypot(width,height))
+    for pos in positions:
+        cap.set(cv2.CAP_PROP_POS_FRAMES,pos)
+        ok,frame=cap.read()
+        if not ok or frame is None:
+            continue
+        try:
+            faces=FS_APP.get(frame)
+        except Exception:
+            faces=[]
+        if not faces:
+            continue
+        detected+=1
+        if len(faces)>1:
+            multi+=1
+        face=_largest(faces)
+        sig=_sig(face)
+        scores.append(sig['det_score'])
+        area_ratios.append(sig['area']/max(1.0,width*height))
+        if prev_center is not None:
+            dx=sig['center'][0]-prev_center[0]
+            dy=sig['center'][1]-prev_center[1]
+            motions.append(math.hypot(dx,dy)/diag)
+        prev_center=sig['center']
+    cap.release()
+    coverage=detected/max(1,len(positions))
+    multi_ratio=multi/max(1,detected)
+    avg_score=sum(scores)/max(1,len(scores))
+    avg_area=sum(area_ratios)/max(1,len(area_ratios))
+    avg_motion=sum(motions)/max(1,len(motions))
+    risk=0
+    reasons=[]
+    if coverage<0.80: risk+=3; reasons.append('visage souvent non détecté')
+    elif coverage<0.95: risk+=1; reasons.append('détection parfois instable')
+    if multi_ratio>0.20: risk+=2; reasons.append('plusieurs visages fréquents')
+    if avg_score<0.60: risk+=2; reasons.append('score de détection faible')
+    elif avg_score<0.72: risk+=1; reasons.append('score de détection moyen')
+    if avg_motion>0.08: risk+=2; reasons.append('mouvements importants')
+    elif avg_motion>0.04: risk+=1; reasons.append('mouvements modérés')
+    if avg_area<0.018: risk+=2; reasons.append('visage petit dans l’image')
+    recommendation='facefusion-ultra' if risk>=4 else 'builtin-ultra'
+    level='difficile' if risk>=4 else ('moyenne' if risk>=2 else 'facile')
+    summary=(
+        f'Analyse vidéo: difficulté {level} | couverture visage={coverage*100:.0f}% | '
+        f'plusieurs visages={multi_ratio*100:.0f}% | score moyen={avg_score:.2f} | '
+        f'mouvement moyen={avg_motion:.3f} | surface visage={avg_area*100:.2f}%\n'
+        f'Recommandation: {recommendation}'
+    )
+    if reasons:
+        summary += '\nFacteurs: ' + ', '.join(reasons)
+    return summary,recommendation
+
+def cleanup_video_cache(max_age_hours=None,keep_recent=None):
+    max_age=float(max_age_hours if max_age_hours is not None else VIDEO_FACE_SWAP_CACHE_MAX_AGE_HOURS)
+    keep=int(keep_recent if keep_recent is not None else VIDEO_FACE_SWAP_CACHE_KEEP_RECENT)
+    dirs=[p for p in Path(VIDEO_JOB_ROOT).iterdir() if p.is_dir()] if os.path.isdir(VIDEO_JOB_ROOT) else []
+    dirs.sort(key=lambda p:p.stat().st_mtime,reverse=True)
+    active={str(j.get('id')) for j in list_jobs(limit=500) if j.get('status') in ('queued','running','paused')}
+    now=time.time()
+    removed=0
+    for idx,p in enumerate(dirs):
+        if idx<keep or p.name in active:
+            continue
+        age_h=(now-p.stat().st_mtime)/3600.0
+        if age_h>=max_age:
+            shutil.rmtree(p,ignore_errors=True)
+            removed+=1
+    return f'Nettoyage terminé: {removed} dossier(s) vidéo supprimé(s).'
+
+def video_selftest_report():
+    tests=[]
+    try:
+        tests.append(('IoU identique',abs(_bbox_iou([0,0,10,10],[0,0,10,10])-1.0)<1e-6))
+        tests.append(('IoU séparé',_bbox_iou([0,0,10,10],[20,20,30,30])==0.0))
+        tests.append(('Dossiers jobs',os.path.isdir(VIDEO_JOB_ROOT)))
+        tests.append(('FFmpeg ou installation lazy',bool(shutil.which('ffmpeg')) or True))
+        tests.append(('FaceFusion config',bool(VIDEO_FACEFUSION_VERSION)))
+    except Exception:
+        tests.append(('Self-test interne',False))
+    ok=sum(1 for _,v in tests if v)
+    lines=[f'{name}: '+('OK' if value else 'ERREUR') for name,value in tests]
+    return f'Self-test vidéo: {ok}/{len(tests)} OK\n'+'\n'.join(lines)
 
 def _choose_mode(video_path):
     if not VIDEO_FACE_SWAP_AUTO_MODE:
@@ -414,6 +585,7 @@ def video_face_swap(source_image,target_video,frame_stride=1,max_frames=0,keep_a
     progress_every=max(1,int(VIDEO_FACE_SWAP_PROGRESS_EVERY or 8))
 
     for idx,path in enumerate(files,1):
+        _wait_if_paused(job_id)
         if _is_cancel_requested(job_id):
             raise JobCancelled('Annulation demandée par l’utilisateur.')
 
