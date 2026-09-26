@@ -29,3 +29,13 @@ Interface Gradio mobile-first pour Qwen-Image 2.1 avec le text encoder Heretic G
 - nettoyage automatique des fichiers temporaires
 - mode automatique rapide / ultra
 - conservation audio au rendu final
+
+
+### Backend Ultra optionnel
+
+Le mode vidéo propose maintenant :
+- `auto`
+- `builtin-ultra`
+- `facefusion-ultra`
+
+FaceFusion Ultra est installé dans un environnement Python séparé au premier usage afin de ne pas casser les dépendances du notebook principal. Il active le face swapper, le masque d'occlusion/région, l'expression restorer et le face enhancer.
