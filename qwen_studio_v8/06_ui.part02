@@ -1,4 +1,4 @@
-                   e_btn=gr.Button('✏️ Modifier',variant='primary',elem_classes=['primary-btn'])
+                    e_btn=gr.Button('✏️ Modifier',variant='primary',elem_classes=['primary-btn'])
                     edit_job=gr.Textbox(visible=False)
                     edit_submit_info=gr.Textbox(label='État',lines=2,interactive=False)
                     edit_refresh=gr.Button('↻ Voir le résultat', elem_classes=['secondary-btn'])
