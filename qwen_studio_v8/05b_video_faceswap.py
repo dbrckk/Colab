@@ -737,7 +737,7 @@ def analyze_video_difficulty(video_path):
     samples=max(4,min(32,int(VIDEO_FACE_SWAP_ANALYSIS_SAMPLE_FRAMES or 12)))
     positions=[int(i*(frame_count-1)/max(1,samples-1)) for i in range(samples)]
     detected=multi=0
-    scores=[]; area_ratios=[]; motions=[]
+    scores=[]; area_ratios=[]; motions=[]; mouth_widths=[]
     prev_center=None
     width=max(1.0,float(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 1))
     height=max(1.0,float(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 1))
@@ -760,6 +760,16 @@ def analyze_video_difficulty(video_path):
         sig=_sig(face)
         scores.append(sig['det_score'])
         area_ratios.append(sig['area']/max(1.0,width*height))
+        kps=sig.get('kps')
+        if kps is not None:
+            try:
+                pts=list(kps)
+                if len(pts)>=5:
+                    dx=float(pts[4][0])-float(pts[3][0])
+                    dy=float(pts[4][1])-float(pts[3][1])
+                    mouth_widths.append((dx*dx+dy*dy)**0.5/max(1.0,sig['area']**0.5))
+            except Exception:
+                pass
         if prev_center is not None:
             dx=sig['center'][0]-prev_center[0]
             dy=sig['center'][1]-prev_center[1]
@@ -771,6 +781,14 @@ def analyze_video_difficulty(video_path):
     avg_score=sum(scores)/max(1,len(scores))
     avg_area=sum(area_ratios)/max(1,len(area_ratios))
     avg_motion=sum(motions)/max(1,len(motions))
+    avg_mouth=sum(mouth_widths)/max(1,len(mouth_widths))
+    mouth_var=(
+        sum((x-avg_mouth)**2 for x in mouth_widths)/max(1,len(mouth_widths))
+        if mouth_widths else 0.0
+    )
+    mouth_motion=mouth_var**0.5
+    has_audio=_ffprobe_has_audio(video_path)
+    talking_likely=bool(has_audio and len(mouth_widths)>=4 and mouth_motion>0.008)
     risk=0
     reasons=[]
     if coverage<0.80: risk+=3; reasons.append('visage souvent non détecté')
@@ -781,12 +799,16 @@ def analyze_video_difficulty(video_path):
     if avg_motion>0.08: risk+=2; reasons.append('mouvements importants')
     elif avg_motion>0.04: risk+=1; reasons.append('mouvements modérés')
     if avg_area<0.018: risk+=2; reasons.append('visage petit dans l’image')
-    recommendation='facefusion-ultra' if risk>=4 else 'builtin-ultra'
+    if talking_likely:
+        risk+=2
+        reasons.append('parole / mouvement de bouche probable')
+    recommendation='facefusion-ultra' if (risk>=4 or talking_likely) else 'builtin-ultra'
     level='difficile' if risk>=4 else ('moyenne' if risk>=2 else 'facile')
     summary=(
         f'Analyse vidéo: difficulté {level} | couverture visage={coverage*100:.0f}% | '
         f'plusieurs visages={multi_ratio*100:.0f}% | score moyen={avg_score:.2f} | '
-        f'mouvement moyen={avg_motion:.3f} | surface visage={avg_area*100:.2f}%\n'
+        f'mouvement moyen={avg_motion:.3f} | mouvement bouche={mouth_motion:.4f} | '
+        f'surface visage={avg_area*100:.2f}% | audio={"oui" if has_audio else "non"}\n'
         f'Recommandation: {recommendation}'
     )
     if reasons:
@@ -842,18 +864,6 @@ def _resolve_video_backend(target_video,requested_backend='auto',job_id=None):
         return 'builtin-ultra'
     if not VIDEO_FACEFUSION_ENABLED:
         return 'builtin-ultra'
-    if (
-        VIDEO_FACE_SWAP_AUTO_QUALITY_FIRST
-        and VIDEO_FACE_SWAP_AUTO_FACEFUSION_FOR_AUDIO
-        and _ffprobe_has_audio(target_video)
-        and (_facefusion_ready() or VIDEO_FACEFUSION_AUTO_INSTALL_ON_HARD)
-    ):
-        j=load_job(job_id) if job_id else None
-        if j:
-            j['analysis']='Mode qualité: piste audio détectée → FaceFusion Ultra pour mieux préserver les expressions/paroles.'
-            j['info']=j['analysis']
-            save_job(j)
-        return 'facefusion-ultra'
     try:
         summary,recommended=analyze_video_difficulty(target_video)
         j=load_job(job_id) if job_id else None
