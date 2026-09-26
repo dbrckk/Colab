@@ -210,3 +210,7 @@ VIDEO_FACE_SWAP_MIN_FREE_DISK_GB = 4 #@param {type:"integer"}
 VIDEO_FACEFUSION_CACHE_ENABLED = True #@param {type:"boolean"}
 VIDEO_FACEFUSION_CACHE_DIR = f"{DRIVE_ROOT}/facefusion_cache" if USE_DRIVE else f"{ROOT}/facefusion_cache"
 VIDEO_FACEFUSION_CACHE_TAR = f"{VIDEO_FACEFUSION_CACHE_DIR}/facefusion_{VIDEO_FACEFUSION_VERSION}.tar.gz"
+
+# v8.6 — priorité qualité pour le choix automatique vidéo
+VIDEO_FACE_SWAP_AUTO_QUALITY_FIRST = True #@param {type:"boolean"}
+VIDEO_FACE_SWAP_AUTO_FACEFUSION_FOR_AUDIO = True #@param {type:"boolean"}
