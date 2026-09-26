@@ -171,3 +171,15 @@ VIDEO_FACE_SWAP_RECOVERY_STABLE_FRAMES = 2 #@param {type:"integer"}
 VIDEO_FACE_SWAP_AUTO_MODE = True #@param {type:"boolean"}
 VIDEO_FACE_SWAP_EASY_DET_SCORE = 0.75 #@param {type:"number"}
 VIDEO_FACE_SWAP_HARD_MODE_CRF = 16 #@param {type:"integer"}
+
+
+# v8.4 — Backend FaceFusion Ultra optionnel (lazy)
+VIDEO_FACEFUSION_ENABLED = True #@param {type:"boolean"}
+VIDEO_FACEFUSION_VERSION = "3.9.0" #@param {type:"string"}
+VIDEO_FACEFUSION_ROOT = "/content/facefusion"
+VIDEO_FACEFUSION_VENV = "/content/facefusion-venv"
+VIDEO_FACEFUSION_EXPRESSION_RESTORER = True #@param {type:"boolean"}
+VIDEO_FACEFUSION_FACE_ENHANCER = True #@param {type:"boolean"}
+VIDEO_FACEFUSION_ENHANCER_BLEND = 60 #@param {type:"integer"}
+VIDEO_FACEFUSION_EXPRESSION_FACTOR = 80 #@param {type:"integer"}
+VIDEO_FACEFUSION_MASK_TYPES = "occlusion region" #@param {type:"string"}
