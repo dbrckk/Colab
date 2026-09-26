@@ -75,7 +75,7 @@ GRADIO_ANALYTICS = False #@param {type:"boolean"}
 
 # v8 — UX
 UI_TITLE = "Qwen Studio — Heretic GGUF"
-UI_SUBTITLE = "Qwen-Image 2.1 • Heretic Q4_K_M • Video Face Swap Ultra v8.4"
+UI_SUBTITLE = "Qwen-Image 2.1 • Heretic Q4_K_M • Video Face Swap Ultra v8.5"
 AUTO_REFRESH_SECONDS = 3 #@param {type:"integer"}
 
 
@@ -183,3 +183,15 @@ VIDEO_FACEFUSION_FACE_ENHANCER = True #@param {type:"boolean"}
 VIDEO_FACEFUSION_ENHANCER_BLEND = 60 #@param {type:"integer"}
 VIDEO_FACEFUSION_EXPRESSION_FACTOR = 80 #@param {type:"integer"}
 VIDEO_FACEFUSION_MASK_TYPES = "occlusion region" #@param {type:"string"}
+
+
+# v8.5 — stabilité / UX vidéo
+VIDEO_FACE_SWAP_USE_SEAMLESS_BLEND = True #@param {type:"boolean"}
+VIDEO_FACE_SWAP_MASK_DILATE = 18 #@param {type:"integer"}
+VIDEO_FACE_SWAP_MASK_BLUR = 21 #@param {type:"integer"}
+VIDEO_FACE_SWAP_PAUSE_ENABLED = True #@param {type:"boolean"}
+VIDEO_FACE_SWAP_ANALYSIS_SAMPLE_FRAMES = 12 #@param {type:"integer"}
+VIDEO_FACE_SWAP_CACHE_MAX_AGE_HOURS = 24 #@param {type:"integer"}
+VIDEO_FACE_SWAP_CACHE_KEEP_RECENT = 3 #@param {type:"integer"}
+VIDEO_FACE_SWAP_AUTO_REFRESH = True #@param {type:"boolean"}
+VIDEO_FACEFUSION_AUTO_INSTALL_ON_HARD = False #@param {type:"boolean"}
