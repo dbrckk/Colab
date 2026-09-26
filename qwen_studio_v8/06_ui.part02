@@ -57,7 +57,7 @@
                         vfs_stride=gr.Slider(1,4,value=VIDEO_FACE_SWAP_FRAME_STRIDE,step=1,label='Frame stride • 1 recommandé')
                         vfs_detect_every=gr.Slider(1,5,value=VIDEO_FACE_SWAP_DETECT_EVERY,step=1,label='Détection tous les N frames • 1 recommandé')
                         vfs_max_frames=gr.Number(value=VIDEO_FACE_SWAP_MAX_FRAMES,precision=0,label='Max frames • 0 = aucune limite')
-                        vfs_preview_seconds=gr.Number(value=VIDEO_FACE_SWAP_PREVIEW_SECONDS,precision=0,label='Aperçu secondes • 0 = rendu complet')
+                        vfs_preview_seconds=gr.Number(value=VIDEO_FACE_SWAP_PREFLIGHT_SECONDS,precision=0,label='Aperçu automatique avant rendu (secondes)')
                         vfs_keep_audio=gr.Checkbox(value=VIDEO_FACE_SWAP_KEEP_AUDIO,label='Conserver l’audio')
                         with gr.Row():
                             vfs_crf=gr.Slider(14,24,value=VIDEO_FACE_SWAP_CRF,step=1,label='CRF • 17 recommandé')
@@ -68,6 +68,7 @@
                     with gr.Row():
                         vfs_pause=gr.Button('⏸ Pause',elem_classes=['secondary-btn'])
                         vfs_resume=gr.Button('▶ Reprendre',elem_classes=['secondary-btn'])
+                        vfs_restart=gr.Button('↻ Reprendre après interruption',elem_classes=['secondary-btn'])
                         vfs_cancel=gr.Button('⛔ Annuler',variant='stop')
                     vfs_job=gr.Textbox(label='Job ID',interactive=False)
                     vfs_submit_info=gr.Textbox(label='État',lines=2,interactive=False)
@@ -89,6 +90,7 @@
             )
             vfs_pause.click(_pause_video_job,[vfs_job],[vfs_submit_info,jobs_box])
             vfs_resume.click(_resume_video_job,[vfs_job],[vfs_submit_info,jobs_box])
+            vfs_restart.click(_restart_video_job,[vfs_job],[vfs_submit_info,jobs_box])
             vfs_cancel.click(_cancel_video_job,[vfs_job],[vfs_submit_info,jobs_box])
             vfs_refresh.click(_refresh_video_job,[vfs_job],[vfs_status,vfs_out,vfs_info,jobs_box])
             try:
