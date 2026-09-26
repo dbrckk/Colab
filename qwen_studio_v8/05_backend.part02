@@ -1,0 +1,87 @@
+ated_at':now,'updated_at':now,'created_ts':time.time(),'payload':payload,'result_path':'','info':'','error':''}
+    save_job(job)
+    with JOB_LOCK:
+        JOB_FUTURES[job_id]=JOB_EXECUTOR.submit(_execute_job, job_id)
+    return job
+
+
+def _execute_job(job_id):
+    job=load_job(job_id)
+    if not job:
+        return
+    try:
+        job['status']='running'
+        save_job(job)
+        p=job['payload']
+        if job['type']=='generate':
+            result, info = run_sd(p['prompt'], p['aspect'], p['steps'], p['cfg'], p['seed'], None)
+        elif job['type']=='edit':
+            result, info = run_sd(p['prompt'], p['aspect'], p['steps'], p['cfg'], p['seed'], p['reference_image'])
+        elif job['type']=='faceswap':
+            result, info = face_swap(p['source'], p['target'])
+        else:
+            raise RuntimeError(f"Type de job inconnu: {job['type']}")
+        job=load_job(job_id) or job
+        job['status']='done'
+        job['result_path']=result
+        job['info']=info
+        save_job(job)
+    except Exception as e:
+        job=load_job(job_id) or job
+        job['status']='error'
+        job['error']=f"{type(e).__name__}: {e}\n{traceback.format_exc()[-6000:]}"
+        save_job(job)
+    finally:
+        gc.collect()
+
+
+def submit_generate_job(prompt, aspect, steps, cfg, seed):
+    if not (prompt or '').strip():
+        raise ValueError('Prompt vide')
+    return create_job('generate', {'prompt':prompt,'aspect':aspect,'steps':int(steps),'cfg':float(cfg),'seed':int(seed)})
+
+
+def submit_edit_job(prompt, image, aspect, steps, cfg, seed):
+    if not (prompt or '').strip():
+        raise ValueError('Prompt vide')
+    if not image:
+        raise ValueError('Ajoute une image de référence')
+    temp_id=uuid.uuid4().hex[:8]
+    persisted=_persist_uploaded_file(image, temp_id, 'reference')
+    return create_job('edit', {'prompt':prompt,'aspect':aspect,'steps':int(steps),'cfg':float(cfg),'seed':int(seed),'reference_image':persisted})
+
+
+def submit_faceswap_job(src, tgt):
+    if not src or not tgt:
+        raise ValueError('Ajoute source et cible')
+    temp_id=uuid.uuid4().hex[:8]
+    src_p=_persist_uploaded_file(src, temp_id, 'source')
+    tgt_p=_persist_uploaded_file(tgt, temp_id, 'target')
+    return create_job('faceswap', {'source':src_p,'target':tgt_p})
+
+
+def job_status_view(job_id):
+    j=load_job(job_id)
+    if not j:
+        return 'Job introuvable', None, ''
+    status=f"{j.get('status','?')} — {j.get('updated_at','')}"
+    if j.get('error'):
+        status += '\n' + j['error'][-3000:]
+    result=j.get('result_path') or None
+    info=j.get('info') or ''
+    return status, result, info
+
+
+def recover_old_jobs():
+    changed=0
+    for j in list_jobs(limit=500):
+        if j.get('status') in ('queued','running'):
+            j['status']='interrupted'
+            j['error']=(j.get('error') or '') + '\nRuntime précédent interrompu.'
+            save_job(j)
+            changed += 1
+    return changed
+
+changed = recover_old_jobs()
+if changed:
+    print(f'ℹ️ {changed} jobs ont été marqués interrupted après redémarrage du runtime.')
