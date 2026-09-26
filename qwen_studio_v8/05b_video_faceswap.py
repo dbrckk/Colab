@@ -376,11 +376,13 @@ def _sig(face):
         'kps':getattr(face,'kps',None),
     }
 
-def _select_face(faces,prev=None):
+def _select_face(faces,prev=None,target_face_position=0):
     if not faces:
         return None,None
     if prev is None or not VIDEO_FACE_SWAP_STRICT_TRACKING:
-        f=_largest(faces)
+        ordered=sorted(faces,key=lambda f:_face_area(f),reverse=True)
+        pos=max(0,min(int(target_face_position or 0),len(ordered)-1))
+        f=ordered[pos]
         return f,_sig(f)
     best=None; best_score=-1e9
     px,py=prev['center']
@@ -558,7 +560,7 @@ def ensure_facefusion_ultra():
         cwd=VIDEO_FACEFUSION_ROOT,check=True,timeout=1800,env=env
     )
 
-def run_facefusion_ultra(source_image,target_video,keep_audio=True,preview_seconds=0,job_id=None):
+def run_facefusion_ultra(source_image,target_video,keep_audio=True,preview_seconds=0,job_id=None,target_face_position=0,reference_frame_number=0,reference_distance=0.30):
     ensure_ffmpeg()
     ensure_facefusion_ultra()
     out=_new_output_video('facefusion_ultra_preview' if int(preview_seconds or 0)>0 else 'facefusion_ultra')
@@ -577,6 +579,10 @@ def run_facefusion_ultra(source_image,target_video,keep_audio=True,preview_secon
         '--face-enhancer-blend',str(int(VIDEO_FACEFUSION_ENHANCER_BLEND)),
         '--expression-restorer-model','live_portrait',
         '--expression-restorer-factor',str(int(VIDEO_FACEFUSION_EXPRESSION_FACTOR)),
+        '--face-selector-mode','reference',
+        '--reference-face-position',str(max(0,int(target_face_position or 0))),
+        '--reference-frame-number',str(max(0,int(reference_frame_number or 0))),
+        '--reference-face-distance',str(float(reference_distance or 0.30)),
         '--execution-providers','cuda',
         '-s',source_image,
         '-t',target_video,
@@ -880,7 +886,7 @@ def _encode_frames(frames_out,fps,target_video,out,keep_audio,crf,preset,preview
     else:
         shutil.copy2(video_only,out)
 
-def video_face_swap(source_image,target_video,frame_stride=1,max_frames=0,keep_audio=True,crf=17,preset='slow',detect_every=1,preview_seconds=0,job_id=None,backend='auto'):
+def video_face_swap(source_image,target_video,frame_stride=1,max_frames=0,keep_audio=True,crf=17,preset='slow',detect_every=1,preview_seconds=0,job_id=None,backend='auto',target_face_position=0,reference_frame_number=0,reference_distance=0.30):
     import cv2, math
     ensure_ffmpeg()
     frame_stride=max(1,int(frame_stride or 1))
@@ -892,7 +898,7 @@ def video_face_swap(source_image,target_video,frame_stride=1,max_frames=0,keep_a
 
     resolved_backend=_resolve_video_backend(target_video,backend,job_id)
     if resolved_backend=='facefusion-ultra':
-        return run_facefusion_ultra(source_image,target_video,keep_audio,preview_seconds,job_id)
+        return run_facefusion_ultra(source_image,target_video,keep_audio,preview_seconds,job_id,target_face_position,reference_frame_number,reference_distance)
 
     init_faceswap()
     mode=_choose_mode(target_video)
@@ -995,7 +1001,7 @@ def video_face_swap(source_image,target_video,frame_stride=1,max_frames=0,keep_a
             except Exception:
                 faces=[]
 
-            face,sig=_select_face(faces,prev) if faces else (None,None)
+            face,sig=_select_face(faces,prev,target_face_position) if faces else (None,None)
             bad=(face is None or sig is None)
             if not bad and VIDEO_FACE_SWAP_SKIP_ON_OCCLUSION:
                 bad=_unstable(sig,prev)
@@ -1072,7 +1078,7 @@ def video_face_swap(source_image,target_video,frame_stride=1,max_frames=0,keep_a
     return out,info
 
 
-def submit_faceswap_video_job(src,video,frame_stride=1,max_frames=0,keep_audio=True,crf=17,preset='slow',detect_every=1,preview_seconds=0,backend='auto',preflight_seconds=0):
+def submit_faceswap_video_job(src,video,frame_stride=1,max_frames=0,keep_audio=True,crf=17,preset='slow',detect_every=1,preview_seconds=0,backend='auto',preflight_seconds=0,target_face_position=0,reference_frame_number=0,reference_distance=0.30):
     if not src or not video:
         raise ValueError('Ajoute un visage source et une vidéo cible')
     temp=uuid.uuid4().hex[:8]
@@ -1086,6 +1092,9 @@ def submit_faceswap_video_job(src,video,frame_stride=1,max_frames=0,keep_audio=T
         'preview_seconds':int(preview_seconds or 0),
         'backend':str(backend or 'auto'),
         'preflight_seconds':int(preflight_seconds or 0),
+        'target_face_position':max(0,int(target_face_position or 0)),
+        'reference_frame_number':max(0,int(reference_frame_number or 0)),
+        'reference_distance':float(reference_distance or 0.30),
     })
 
 def restart_video_job(job_id):
@@ -1152,7 +1161,8 @@ def _execute_job(job_id):
                 p.get('frame_stride',1),0,
                 False,p.get('crf',17),
                 p.get('preset','slow'),p.get('detect_every',1),
-                preflight_seconds,job_id,p.get('backend','auto')
+                preflight_seconds,job_id,p.get('backend','auto'),
+                p.get('target_face_position',0),p.get('reference_frame_number',0),p.get('reference_distance',0.30)
             )
             job=load_job(job_id) or job
             job['preview_path']=preview_path
@@ -1165,7 +1175,8 @@ def _execute_job(job_id):
             p.get('frame_stride',1),p.get('max_frames',0),
             p.get('keep_audio',True),p.get('crf',17),
             p.get('preset','slow'),p.get('detect_every',1),
-            preview_seconds,job_id,p.get('backend','auto')
+            preview_seconds,job_id,p.get('backend','auto'),
+            p.get('target_face_position',0),p.get('reference_frame_number',0),p.get('reference_distance',0.30)
         )
         job=load_job(job_id) or job
         job['status']='done'
