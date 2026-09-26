@@ -42,20 +42,10 @@ def _checkpoint_chunk_bounds(path):
         return None
 
 def _restore_video_checkpoints(job_id,frames_out):
-    if not VIDEO_FACE_SWAP_PERSIST_CHECKPOINTS or not job_id:
-        return 0
-    checkpoint_dir=_video_checkpoint_dir(job_id)
-    restored=0
-    for archive in sorted(Path(checkpoint_dir).glob('chunk_*.tar')):
-        try:
-            with tarfile.open(archive,'r') as tf:
-                tf.extractall(frames_out)
-            bounds=_checkpoint_chunk_bounds(archive)
-            if bounds:
-                restored=max(restored,bounds[1])
-        except Exception:
-            continue
-    return restored
+    # v8.6: les chunks persistent sur Drive sans être tous ré-extraits localement.
+    # On renvoie seulement la dernière frame persistée; l'encodage final sait
+    # lire les archives chunk par chunk pour économiser fortement le disque.
+    return _latest_checkpoint_end(job_id)
 
 def _latest_checkpoint_end(job_id):
     if not VIDEO_FACE_SWAP_PERSIST_CHECKPOINTS or not job_id:
@@ -88,6 +78,12 @@ def _checkpoint_frames(job_id,frames_out,start_idx,end_idx):
             for idx,p in files:
                 tf.add(p,arcname=f'{idx:08d}.png',recursive=False)
         os.replace(tmp,dest)
+        if VIDEO_FACE_SWAP_DELETE_CHECKPOINTED_FRAMES:
+            for _,p in files:
+                try:
+                    os.remove(p)
+                except Exception:
+                    pass
     except Exception:
         try:
             if os.path.exists(tmp):
@@ -643,6 +639,79 @@ def _choose_mode(video_path):
         return 'ultra'
     duration=_ffprobe_duration(video_path)
     return 'fast' if duration>0 and duration<8.0 else 'ultra'
+
+def _ensure_video_disk_headroom(width,height,chunk_frames):
+    free=shutil.disk_usage(ROOT).free
+    floor=int(VIDEO_FACE_SWAP_MIN_FREE_DISK_GB)*1024**3
+    # marge conservatrice pour les PNG du chunk + encodage temporaire.
+    estimated=max(512*1024**2,int(max(1,width)*max(1,height)*3*max(1,chunk_frames)*1.35))
+    required=max(floor,estimated)
+    if free<required:
+        raise RuntimeError(
+            f'Espace disque local insuffisant: {free/1024**3:.1f} Go libres; '
+            f'environ {required/1024**3:.1f} Go requis pour ce chunk.'
+        )
+
+def _encode_checkpoint_chunks(job_id,fps,target_video,out,keep_audio,crf,preset,preview_seconds=0):
+    checkpoint_dir=_video_checkpoint_dir(job_id)
+    archives=sorted(
+        [p for p in Path(checkpoint_dir).glob('chunk_*.tar') if _checkpoint_chunk_bounds(p)],
+        key=lambda p:_checkpoint_chunk_bounds(p)[0]
+    )
+    if not archives:
+        raise RuntimeError('Aucun checkpoint vidéo disponible pour l’encodage final.')
+    encode_root=os.path.join(_video_job_dir(job_id),'encode_chunks')
+    shutil.rmtree(encode_root,ignore_errors=True)
+    os.makedirs(encode_root,exist_ok=True)
+    segment_paths=[]
+    try:
+        for seg_idx,archive in enumerate(archives,1):
+            start,end=_checkpoint_chunk_bounds(archive)
+            seg_frames=os.path.join(encode_root,f'frames_{seg_idx:04d}')
+            os.makedirs(seg_frames,exist_ok=True)
+            with tarfile.open(archive,'r') as tf:
+                tf.extractall(seg_frames)
+            count=max(1,end-start+1)
+            seg_out=os.path.join(encode_root,f'segment_{seg_idx:04d}.mp4')
+            cmd=[
+                'ffmpeg','-y','-framerate',f'{fps:.6f}',
+                '-start_number',str(start),
+                '-i',os.path.join(seg_frames,'%08d.png'),
+                '-frames:v',str(count),
+                '-c:v','libx264','-preset',preset,'-crf',str(crf),
+                '-pix_fmt','yuv420p',seg_out
+            ]
+            p=subprocess.run(cmd,capture_output=True,text=True)
+            if p.returncode!=0:
+                raise RuntimeError('Encodage chunk échoué:\n'+((p.stdout or '')+'\n'+(p.stderr or ''))[-3000:])
+            segment_paths.append(seg_out)
+            shutil.rmtree(seg_frames,ignore_errors=True)
+        concat_file=os.path.join(encode_root,'segments.txt')
+        with open(concat_file,'w',encoding='utf-8') as fh:
+            for seg in segment_paths:
+                escaped=seg.replace("'","'\\''")
+                fh.write(f"file '{escaped}'\n")
+        video_only=os.path.join(encode_root,'video_only.mp4')
+        p=subprocess.run(
+            ['ffmpeg','-y','-f','concat','-safe','0','-i',concat_file,'-c','copy',video_only],
+            capture_output=True,text=True
+        )
+        if p.returncode!=0:
+            raise RuntimeError('Concaténation vidéo échouée:\n'+((p.stdout or '')+'\n'+(p.stderr or ''))[-3000:])
+        if keep_audio and int(preview_seconds or 0)<=0:
+            mux_copy=['ffmpeg','-y','-i',video_only,'-i',target_video,'-map','0:v:0','-map','1:a?',
+                      '-c:v','copy','-c:a','copy','-shortest',out]
+            p=subprocess.run(mux_copy,capture_output=True,text=True)
+            if p.returncode!=0:
+                mux_aac=['ffmpeg','-y','-i',video_only,'-i',target_video,'-map','0:v:0','-map','1:a?',
+                         '-c:v','copy','-c:a','aac','-b:a','192k','-shortest',out]
+                p=subprocess.run(mux_aac,capture_output=True,text=True)
+                if p.returncode!=0:
+                    shutil.copy2(video_only,out)
+        else:
+            shutil.copy2(video_only,out)
+    finally:
+        shutil.rmtree(encode_root,ignore_errors=True)
 
 def _encode_frames(frames_out,fps,target_video,out,keep_audio,crf,preset,preview_seconds=0):
     video_only=os.path.join(os.path.dirname(frames_out),'video_only.mp4')
