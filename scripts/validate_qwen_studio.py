@@ -40,6 +40,10 @@ required_video = [
     "face-mask-types",
     "def _encode_checkpoint_chunks(",
     "def _preflight_protected_ratio(",
+    "def _resolve_video_backend(",
+    "def _target_anchor_from_video(",
+    "def _smooth_face_geometry(",
+    "def _contiguous_checkpoint_segments(",
 ]
 for token in required_video:
     assert token in video, f"Missing video capability: {token}"
@@ -54,6 +58,10 @@ required_config = [
     "VIDEO_FACE_SWAP_AUTO_REFRESH",
     "VIDEO_FACE_SWAP_STREAM_INPUT",
     "VIDEO_FACE_SWAP_PREFLIGHT_MAX_PROTECTED_RATIO",
+    "VIDEO_FACE_SWAP_AUTO_QUALITY_FIRST",
+    "VIDEO_FACE_SWAP_TARGET_FACE_POSITION",
+    "VIDEO_FACE_SWAP_MIN_TARGET_SIM",
+    "VIDEO_FACEFUSION_VIDEO_QUALITY",
 ]
 for token in required_config:
     assert token in setup, f"Missing setup option: {token}"
@@ -67,6 +75,9 @@ for token in [
     "_analyze_video",
     "gr.Timer",
     "_apply_video_preset",
+    "Qualité maximale",
+    "Faible disque",
+    "vfs_target_face_position",
 ]:
     assert token in ui, f"Missing UI feature: {token}"
 
