@@ -1,0 +1,24 @@
+name: Validate Qwen Studio Current
+
+on:
+  push:
+    paths:
+      - "qwen_studio_v8/**"
+      - "Qwen_Image_2_1_Heretic_GGUF_Gradio_v8_PremiumUX.ipynb"
+      - "scripts/validate_qwen_studio.py"
+      - ".github/workflows/qwen-studio-validate-current.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Validate notebook modules
+        run: python scripts/validate_qwen_studio.py
