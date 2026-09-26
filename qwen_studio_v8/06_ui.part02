@@ -55,13 +55,19 @@
                     )
                     with gr.Accordion('Qualité / robustesse',open=False):
                         vfs_stride=gr.Slider(1,4,value=VIDEO_FACE_SWAP_FRAME_STRIDE,step=1,label='Frame stride • 1 recommandé')
-                        vfs_detect_every=gr.Slider(1,5,value=VIDEO_FACE_SWAP_DETECT_EVERY,step=1,label='Détection tous les N frames • 1 recommandé')
+                        vfs_detect_every=gr.Slider(1,1,value=1,step=1,label='Détection visage • chaque frame en mode Ultra',interactive=False)
                         vfs_max_frames=gr.Number(value=VIDEO_FACE_SWAP_MAX_FRAMES,precision=0,label='Max frames • 0 = aucune limite')
                         vfs_preview_seconds=gr.Number(value=VIDEO_FACE_SWAP_PREFLIGHT_SECONDS,precision=0,label='Aperçu automatique avant rendu (secondes)')
                         vfs_keep_audio=gr.Checkbox(value=VIDEO_FACE_SWAP_KEEP_AUDIO,label='Conserver l’audio')
                         with gr.Row():
                             vfs_crf=gr.Slider(14,24,value=VIDEO_FACE_SWAP_CRF,step=1,label='CRF • 17 recommandé')
                             vfs_preset=gr.Dropdown(['medium','slow','slower'],value=VIDEO_FACE_SWAP_PRESET,label='Encodage')
+                    with gr.Accordion('Vidéo avec plusieurs personnes',open=False):
+                        gr.Markdown('Position 0 = plus grand visage sur la frame de référence. 1 = deuxième, etc. Le tracking verrouille ensuite cette personne.')
+                        with gr.Row():
+                            vfs_target_face_position=gr.Number(value=VIDEO_FACE_SWAP_TARGET_FACE_POSITION,precision=0,label='Position du visage cible')
+                            vfs_reference_frame=gr.Number(value=VIDEO_FACE_SWAP_REFERENCE_FRAME,precision=0,label='Frame de référence')
+                        vfs_reference_distance=gr.Slider(0.05,1.0,value=VIDEO_FACE_SWAP_REFERENCE_DISTANCE,step=0.05,label='Tolérance identité FaceFusion')
                     with gr.Row():
                         vfs_preview_btn=gr.Button('👁 Aperçu rapide',elem_classes=['secondary-btn'])
                         vfs_btn=gr.Button('🎬 Rendu complet',variant='primary',elem_classes=['primary-btn'])
@@ -80,12 +86,12 @@
             vfs_analyze.click(_analyze_video,[vfs_tgt],[vfs_analysis,vfs_backend])
             vfs_preview_btn.click(
                 _submit_video_preview,
-                [vfs_src,vfs_tgt,vfs_stride,vfs_keep_audio,vfs_crf,vfs_preset,vfs_detect_every,vfs_backend],
+                [vfs_src,vfs_tgt,vfs_stride,vfs_keep_audio,vfs_crf,vfs_preset,vfs_detect_every,vfs_backend,vfs_target_face_position,vfs_reference_frame,vfs_reference_distance],
                 [vfs_job,vfs_submit_info,jobs_box]
             )
             vfs_btn.click(
                 _submit_video_fs,
-                [vfs_src,vfs_tgt,vfs_stride,vfs_max_frames,vfs_keep_audio,vfs_crf,vfs_preset,vfs_detect_every,vfs_preview_seconds,vfs_backend],
+                [vfs_src,vfs_tgt,vfs_stride,vfs_max_frames,vfs_keep_audio,vfs_crf,vfs_preset,vfs_detect_every,vfs_preview_seconds,vfs_backend,vfs_target_face_position,vfs_reference_frame,vfs_reference_distance],
                 [vfs_job,vfs_submit_info,jobs_box]
             )
             vfs_pause.click(_pause_video_job,[vfs_job],[vfs_submit_info,jobs_box])
