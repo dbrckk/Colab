@@ -75,7 +75,7 @@ GRADIO_ANALYTICS = False #@param {type:"boolean"}
 
 # v8 — UX
 UI_TITLE = "Qwen Studio — Heretic GGUF"
-UI_SUBTITLE = "Qwen-Image 2.1 • Heretic Q4_K_M • Video Face Swap Ultra v8.5"
+UI_SUBTITLE = "Qwen-Image 2.1 • Heretic Q4_K_M • Video Face Swap Ultra v8.6"
 AUTO_REFRESH_SECONDS = 3 #@param {type:"integer"}
 
 
@@ -200,3 +200,8 @@ VIDEO_FACE_SWAP_PREFLIGHT_SECONDS = 5 #@param {type:"integer"}
 
 VIDEO_FACE_SWAP_PERSIST_CHECKPOINTS = True #@param {type:"boolean"}
 VIDEO_FACE_SWAP_CHECKPOINT_EVERY = 120 #@param {type:"integer"}
+
+# v8.6 — pipeline vidéo streaming / faible disque
+VIDEO_FACE_SWAP_STREAM_INPUT = True #@param {type:"boolean"}
+VIDEO_FACE_SWAP_DELETE_CHECKPOINTED_FRAMES = True #@param {type:"boolean"}
+VIDEO_FACE_SWAP_MIN_FREE_DISK_GB = 4 #@param {type:"integer"}
