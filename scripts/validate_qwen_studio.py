@@ -39,6 +39,7 @@ required_video = [
     "face_enhancer",
     "face-mask-types",
     "def _encode_checkpoint_chunks(",
+    "def _preflight_protected_ratio(",
 ]
 for token in required_video:
     assert token in video, f"Missing video capability: {token}"
@@ -52,6 +53,7 @@ required_config = [
     "VIDEO_FACE_SWAP_PAUSE_ENABLED",
     "VIDEO_FACE_SWAP_AUTO_REFRESH",
     "VIDEO_FACE_SWAP_STREAM_INPUT",
+    "VIDEO_FACE_SWAP_PREFLIGHT_MAX_PROTECTED_RATIO",
 ]
 for token in required_config:
     assert token in setup, f"Missing setup option: {token}"
@@ -64,6 +66,7 @@ for token in [
     "_restart_video_job",
     "_analyze_video",
     "gr.Timer",
+    "_apply_video_preset",
 ]:
     assert token in ui, f"Missing UI feature: {token}"
 
