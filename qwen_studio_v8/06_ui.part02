@@ -1,0 +1,56 @@
+                   e_btn=gr.Button('✏️ Modifier',variant='primary',elem_classes=['primary-btn'])
+                    edit_job=gr.Textbox(visible=False)
+                    edit_submit_info=gr.Textbox(label='État',lines=2,interactive=False)
+                    edit_refresh=gr.Button('↻ Voir le résultat', elem_classes=['secondary-btn'])
+                    edit_status=gr.Textbox(label='Progression',lines=3,interactive=False)
+                with gr.Column(scale=6, elem_classes=['glass']):
+                    e_out=gr.Image(label='Résultat',type='filepath',elem_classes=['result-image'],height=520)
+                    e_info=gr.Textbox(visible=False)
+            edit_latest.click(_copy_latest_to_edit,[],[edit_image,e_info])
+            e_btn.click(_submit_edit,[edit_prompt,edit_image,e_aspect,e_steps,e_cfg,e_seed],[edit_job,edit_submit_info,jobs_box])
+            edit_refresh.click(_refresh_job,[edit_job],[edit_status,e_out,e_info,jobs_box])
+
+        with gr.Tab('🙂 Face swap'):
+            with gr.Row():
+                with gr.Column(scale=5, elem_classes=['glass']):
+                    fs_src=gr.Image(label='Visage source',type='filepath',height=260)
+                    fs_tgt=gr.Image(label='Image cible',type='filepath',height=260)
+                    fs_latest=gr.Button('↙ Utiliser la dernière image comme cible', elem_classes=['secondary-btn'])
+                    fs_btn=gr.Button('🙂 Face swap',variant='primary',elem_classes=['primary-btn'])
+                    fs_job=gr.Textbox(visible=False)
+                    fs_submit_info=gr.Textbox(label='État',lines=2,interactive=False)
+                    fs_refresh=gr.Button('↻ Voir le résultat', elem_classes=['secondary-btn'])
+                    fs_status=gr.Textbox(label='Progression',lines=3,interactive=False)
+                with gr.Column(scale=6, elem_classes=['glass']):
+                    fs_out=gr.Image(label='Résultat',type='filepath',elem_classes=['result-image'],height=520)
+                    fs_info=gr.Textbox(visible=False)
+            fs_latest.click(latest_image,[],[fs_tgt,fs_info])
+            fs_btn.click(_submit_fs,[fs_src,fs_tgt],[fs_job,fs_submit_info,jobs_box])
+            fs_refresh.click(_refresh_job,[fs_job],[fs_status,fs_out,fs_info,jobs_box])
+
+        with gr.Tab('🔄 Récupérer'):
+            with gr.Column(elem_classes=['glass']):
+                gr.Markdown('### Retrouver un résultat\nColle un Job ID après avoir changé d’onglet ou être revenu plus tard.')
+                lookup_id=gr.Textbox(label='Job ID',placeholder='20260926...')
+                lookup_btn=gr.Button('Récupérer',variant='primary',elem_classes=['primary-btn'])
+                lookup_status=gr.Textbox(label='État',lines=4,interactive=False)
+                lookup_img=gr.Image(label='Résultat',type='filepath',elem_classes=['result-image'],height=520)
+                lookup_info=gr.Textbox(label='Informations',lines=2,interactive=False,visible=False)
+                lookup_btn.click(_refresh_job,[lookup_id],[lookup_status,lookup_img,lookup_info,jobs_box])
+
+        with gr.Tab('🛠 Technique'):
+            with gr.Column(elem_classes=['glass']):
+                tech_status=gr.Textbox(label='Bootstrap',value=bootstrap_status_text(),lines=8,interactive=False)
+                tech_refresh=gr.Button('↻ Actualiser', elem_classes=['secondary-btn'])
+                tech_jobs=gr.Dataframe(
+                    headers=['Job ID','Type','État','Créé','Mis à jour','Résultat','Erreur'],
+                    value=jobs_table(),interactive=False,label='Jobs récents',wrap=True
+                )
+                tech_refresh.click(_prepare_status,[],[tech_status,tech_jobs])
+                with gr.Accordion('Chemins des modèles',open=False):
+                    gr.Markdown(f'**Heretic**  \n`{HERETIC_PATH}`\n\n**mmproj**  \n`{MMPROJ_PATH}`\n\n**DiT**  \n`{DIT_PATH}`\n\n**VAE**  \n`{VAE_PATH}`')
+
+
+#@title 9) Lancer Gradio
+# Les images ne sont jamais affichées dans les cellules Colab.
+# Toute visualisation se fait 
