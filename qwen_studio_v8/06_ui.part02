@@ -41,6 +41,13 @@
                     vfs_src=gr.Image(label='Visage source',type='filepath',height=250)
                     vfs_tgt=gr.Video(label='Vidéo cible',height=300)
                     with gr.Row():
+                        vfs_quality_preset=gr.Dropdown(
+                            ['Qualité maximale','Équilibré','Rapide','Faible disque'],
+                            value='Qualité maximale',
+                            label='Preset vidéo'
+                        )
+                        vfs_apply_preset=gr.Button('Appliquer',elem_classes=['secondary-btn'])
+                    with gr.Row():
                         vfs_analyze=gr.Button('🔎 Analyser la vidéo',elem_classes=['secondary-btn'])
                         vfs_backend=gr.Dropdown(
                             ['auto','builtin-ultra','facefusion-ultra'],
@@ -83,6 +90,11 @@
                 with gr.Column(scale=6, elem_classes=['glass']):
                     vfs_out=gr.Video(label='Résultat vidéo',height=520)
                     vfs_info=gr.Textbox(label='Détails',lines=5,interactive=False)
+            vfs_apply_preset.click(
+                _apply_video_preset,
+                [vfs_quality_preset],
+                [vfs_stride,vfs_crf,vfs_preset,vfs_preview_seconds,vfs_backend,vfs_keep_audio]
+            )
             vfs_analyze.click(_analyze_video,[vfs_tgt],[vfs_analysis,vfs_backend])
             vfs_preview_btn.click(
                 _submit_video_preview,
