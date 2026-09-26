@@ -850,6 +850,7 @@ def restart_video_job(job_id):
     except Exception:
         pass
     j['status']='queued'
+    j['runtime_id']=QWEN_RUNTIME_ID
     j['error']=''
     j['info']='Reprise du job à partir des checkpoints existants…'
     save_job(j)
@@ -883,6 +884,7 @@ def _execute_job(job_id):
     try:
         _clear_cancel(job_id)
         job['status']='running'
+        job['runtime_id']=QWEN_RUNTIME_ID
         job['progress_current']=0
         job['progress_total']=0
         job['progress_pct']=0.0
