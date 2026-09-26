@@ -78,6 +78,17 @@ with tempfile.TemporaryDirectory() as td:
         fh.write(b"corruption")
     assert not ns["_checkpoint_is_valid"](archive), "corrupted checkpoint was accepted"
 
+    # A gap must stop resume at the last contiguous frame.
+    gap_frames = base / "gap_frames"
+    gap_frames.mkdir()
+    for idx in (1, 2, 4, 5):
+        (gap_frames / f"{idx:08d}.png").write_bytes((b"gap-%d-" % idx) + b"y" * 2048)
+    ns["_checkpoint_frames"]("job2", str(gap_frames), 1, 2)
+    ns["_checkpoint_frames"]("job2", str(gap_frames), 4, 5)
+    assert ns["_latest_checkpoint_end"]("job2") == 2, "resume crossed a checkpoint gap"
+    segments = ns["_contiguous_checkpoint_segments"]("job2")
+    assert segments and segments[-1][2] == 2
+
     ns["JOB_EXECUTOR"].shutdown(wait=False)
 
 print("Video checkpoint runtime test passed.")
