@@ -1,5 +1,5 @@
 # v8.4 — Face swap vidéo Ultra (tracking + bouche + checkpoints + progression)
-import os, subprocess, shutil, uuid, time, json, signal, tarfile
+import os, subprocess, shutil, uuid, time, json, signal, tarfile, hashlib
 from pathlib import Path
 from fractions import Fraction
 
@@ -53,17 +53,49 @@ def _latest_checkpoint_end(job_id):
     checkpoint_dir=_video_checkpoint_dir(job_id)
     latest=0
     for archive in Path(checkpoint_dir).glob('chunk_*.tar'):
+        if not _checkpoint_is_valid(archive):
+            continue
         bounds=_checkpoint_chunk_bounds(archive)
         if bounds:
             latest=max(latest,bounds[1])
     return latest
+
+def _sha256_file(path,chunk_size=4*1024*1024):
+    h=hashlib.sha256()
+    with open(path,'rb') as fh:
+        while True:
+            chunk=fh.read(chunk_size)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+def _checkpoint_manifest_path(archive):
+    return str(archive)+'.json'
+
+def _checkpoint_is_valid(archive):
+    archive=str(archive)
+    if not os.path.exists(archive) or os.path.getsize(archive)<=1024:
+        return False
+    manifest_path=_checkpoint_manifest_path(archive)
+    try:
+        if os.path.exists(manifest_path):
+            data=json.loads(Path(manifest_path).read_text(encoding='utf-8'))
+            if int(data.get('size',-1))!=os.path.getsize(archive):
+                return False
+            expected=data.get('sha256')
+            if expected and _sha256_file(archive)!=expected:
+                return False
+        return tarfile.is_tarfile(archive)
+    except Exception:
+        return False
 
 def _checkpoint_frames(job_id,frames_out,start_idx,end_idx):
     if not VIDEO_FACE_SWAP_PERSIST_CHECKPOINTS or not job_id or end_idx<start_idx:
         return
     checkpoint_dir=_video_checkpoint_dir(job_id)
     dest=os.path.join(checkpoint_dir,f'chunk_{int(start_idx):08d}_{int(end_idx):08d}.tar')
-    if os.path.exists(dest) and os.path.getsize(dest)>1024:
+    if _checkpoint_is_valid(dest):
         return
     files=[]
     for idx in range(int(start_idx),int(end_idx)+1):
@@ -72,24 +104,47 @@ def _checkpoint_frames(job_id,frames_out,start_idx,end_idx):
             files.append((idx,p))
     if not files:
         return
-    tmp=dest+'.part'
+
+    # Construire l'archive sur le disque local rapide puis la copier vers Drive.
+    local_tmp=os.path.join(
+        _video_job_dir(job_id),
+        f'.checkpoint_{int(start_idx):08d}_{int(end_idx):08d}_{uuid.uuid4().hex[:6]}.tar'
+    )
+    drive_tmp=dest+'.part'
+    manifest_tmp=_checkpoint_manifest_path(dest)+'.part'
     try:
-        with tarfile.open(tmp,'w') as tf:
+        with tarfile.open(local_tmp,'w') as tf:
             for idx,p in files:
                 tf.add(p,arcname=f'{idx:08d}.png',recursive=False)
-        os.replace(tmp,dest)
+        digest=_sha256_file(local_tmp)
+        size=os.path.getsize(local_tmp)
+        shutil.copy2(local_tmp,drive_tmp)
+        os.replace(drive_tmp,dest)
+        manifest={
+            'version':1,
+            'job_id':str(job_id),
+            'start_frame':int(start_idx),
+            'end_frame':int(end_idx),
+            'frame_count':len(files),
+            'size':int(size),
+            'sha256':digest,
+            'created_at':time.strftime('%Y-%m-%d %H:%M:%S'),
+        }
+        Path(manifest_tmp).write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf-8')
+        os.replace(manifest_tmp,_checkpoint_manifest_path(dest))
         if VIDEO_FACE_SWAP_DELETE_CHECKPOINTED_FRAMES:
             for _,p in files:
                 try:
                     os.remove(p)
                 except Exception:
                     pass
-    except Exception:
-        try:
-            if os.path.exists(tmp):
-                os.remove(tmp)
-        except Exception:
-            pass
+    finally:
+        for tmp in (local_tmp,drive_tmp,manifest_tmp):
+            try:
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+            except Exception:
+                pass
 
 def _checkpoint_unsaved_frames(job_id,frames_out):
     if not VIDEO_FACE_SWAP_PERSIST_CHECKPOINTS or not job_id:
@@ -600,6 +655,7 @@ def video_selftest_report():
         tests.append(('IoU séparé',_bbox_iou([0,0,10,10],[20,20,30,30])==0.0))
         tests.append(('Dossier local vidéo',os.path.isdir(VIDEO_LOCAL_JOB_ROOT)))
         tests.append(('Dossier checkpoints persistants',os.path.isdir(VIDEO_CHECKPOINT_ROOT)))
+        tests.append(('Checksum checkpoints',callable(_checkpoint_is_valid)))
         tests.append(('FFmpeg ou installation lazy',bool(shutil.which('ffmpeg')) or True))
         tests.append(('FaceFusion config',bool(VIDEO_FACEFUSION_VERSION)))
     except Exception:
@@ -655,7 +711,7 @@ def _ensure_video_disk_headroom(width,height,chunk_frames):
 def _encode_checkpoint_chunks(job_id,fps,target_video,out,keep_audio,crf,preset,preview_seconds=0,max_frame=0):
     checkpoint_dir=_video_checkpoint_dir(job_id)
     archives=sorted(
-        [p for p in Path(checkpoint_dir).glob('chunk_*.tar') if _checkpoint_chunk_bounds(p)],
+        [p for p in Path(checkpoint_dir).glob('chunk_*.tar') if _checkpoint_chunk_bounds(p) and _checkpoint_is_valid(p)],
         key=lambda p:_checkpoint_chunk_bounds(p)[0]
     )
     if not archives:
