@@ -2,6 +2,17 @@
     except Exception as e:
         raise gr.Error(str(e))
 
+def _submit_video_fs(src,video,frame_stride,max_frames,keep_audio,crf,preset,detect_every):
+    try:
+        j=submit_faceswap_video_job(src,video,frame_stride,max_frames,keep_audio,crf,preset,detect_every)
+        return j['id'], f"Face swap vidéo lancé • {j['id']}", jobs_table()
+    except Exception as e:
+        raise gr.Error(str(e))
+
+def _refresh_video_job(job_id):
+    status,result,info=job_status_video_view(job_id)
+    return status,result,info,jobs_table()
+
 def _refresh_job(job_id):
     status,result,info=job_status_view(job_id)
     return status,result,info,jobs_table()
