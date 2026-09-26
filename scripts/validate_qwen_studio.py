@@ -38,6 +38,7 @@ required_video = [
     "expression_restorer",
     "face_enhancer",
     "face-mask-types",
+    "def _encode_checkpoint_chunks(",
 ]
 for token in required_video:
     assert token in video, f"Missing video capability: {token}"
@@ -50,13 +51,14 @@ required_config = [
     "VIDEO_FACE_SWAP_PREFLIGHT_SECONDS",
     "VIDEO_FACE_SWAP_PAUSE_ENABLED",
     "VIDEO_FACE_SWAP_AUTO_REFRESH",
+    "VIDEO_FACE_SWAP_STREAM_INPUT",
 ]
 for token in required_config:
     assert token in setup, f"Missing setup option: {token}"
 
 ui = read_group(["06_ui.part00", "06_ui.part01", "06_ui.part02", "06_ui.part03"])
 for token in [
-    "Face swap vidéo Ultra v8.5",
+    "Face swap vidéo Ultra v8.6",
     "_pause_video_job",
     "_resume_video_job",
     "_restart_video_job",
@@ -76,6 +78,16 @@ code = "\n".join(
 assert "05b_video_faceswap.py" in code
 assert "05_video_faceswap.py" not in code
 assert code.count("05b_video_faceswap.py") == 1
-assert "v8.5" in nb_path.read_text(encoding="utf-8")
+assert "v8.6" in nb_path.read_text(encoding="utf-8")
 
 print("Qwen Studio validation passed.")
+
+
+backend = read_group(["05_backend.part00", "05_backend.part01", "05_backend.part02"])
+assert "QWEN_RUNTIME_ID" in backend
+assert "JOB_BASE = DRIVE_ROOT if USE_DRIVE else ROOT" in backend
+assert "j.get('runtime_id') == QWEN_RUNTIME_ID" in backend
+
+assert "_encode_checkpoint_chunks(" in video
+assert "cv2.VideoCapture" in video
+assert "_restore_video_checkpoints(job_id,frames_out)" not in video or "return _latest_checkpoint_end(job_id)" in video
