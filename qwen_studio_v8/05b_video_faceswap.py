@@ -804,6 +804,7 @@ def video_selftest_report():
         tests.append(('Checksum checkpoints',callable(_checkpoint_is_valid)))
         tests.append(('Continuité checkpoints',callable(_contiguous_checkpoint_segments)))
         tests.append(('Verrou identité',callable(_select_face)))
+        tests.append(('Référence cible vidéo',callable(_target_anchor_from_video)))
         tests.append(('Lissage temporel',callable(_smooth_face_geometry)))
         tests.append(('FFmpeg ou installation lazy',bool(shutil.which('ffmpeg')) or True))
         tests.append(('FaceFusion config',bool(VIDEO_FACEFUSION_VERSION)))
@@ -951,6 +952,31 @@ def _encode_frames(frames_out,fps,target_video,out,keep_audio,crf,preset,preview
     else:
         shutil.copy2(video_only,out)
 
+def _target_anchor_from_video(video_path,reference_frame_number=0,target_face_position=0):
+    import cv2
+    cap=cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return None
+    try:
+        frame_number=max(0,int(reference_frame_number or 0))
+        if frame_number:
+            cap.set(cv2.CAP_PROP_POS_FRAMES,frame_number)
+        ok,frame=cap.read()
+        if not ok or frame is None:
+            return None
+        try:
+            faces=FS_APP.get(frame)
+        except Exception:
+            faces=[]
+        if not faces:
+            return None
+        ordered=sorted(faces,key=lambda f:_face_area(f),reverse=True)
+        pos=max(0,min(int(target_face_position or 0),len(ordered)-1))
+        emb=getattr(ordered[pos],'normed_embedding',None)
+        return copy.copy(emb) if emb is not None else None
+    finally:
+        cap.release()
+
 def video_face_swap(source_image,target_video,frame_stride=1,max_frames=0,keep_audio=True,crf=17,preset='slow',detect_every=1,preview_seconds=0,job_id=None,backend='auto',target_face_position=0,reference_frame_number=0,reference_distance=0.30):
     import cv2, math
     ensure_ffmpeg()
@@ -976,6 +1002,9 @@ def video_face_swap(source_image,target_video,frame_stride=1,max_frames=0,keep_a
         raise RuntimeError('Image source illisible')
     source_faces=FS_APP.get(source)
     source_face=_largest(source_faces)
+    initial_anchor=_target_anchor_from_video(
+        target_video,reference_frame_number,target_face_position
+    )
 
     work=_video_job_dir(job_id or ('video_'+uuid.uuid4().hex[:8]))
     frames_out=os.path.join(work,'frames_out')
@@ -1022,7 +1051,7 @@ def video_face_swap(source_image,target_video,frame_stride=1,max_frames=0,keep_a
     selected_idx=resume_end
     source_idx=source_start
     prev=None
-    anchor_embedding=None
+    anchor_embedding=initial_anchor
     stable_after_occlusion=0
     processed=resume_end
     swapped=0
