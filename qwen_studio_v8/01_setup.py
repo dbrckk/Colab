@@ -230,3 +230,6 @@ VIDEO_FACE_SWAP_SMOOTHING_ALPHA = 0.72 #@param {type:"number"}
 VIDEO_FACEFUSION_VIDEO_PRESET = "slow" #@param ["medium", "slow", "slower", "veryslow"]
 VIDEO_FACEFUSION_VIDEO_QUALITY = 95 #@param {type:"integer"}
 VIDEO_FACEFUSION_AUDIO_QUALITY = 95 #@param {type:"integer"}
+
+# v8.6 — contrôle qualité de l'aperçu automatique
+VIDEO_FACE_SWAP_PREFLIGHT_MAX_PROTECTED_RATIO = 0.08 #@param {type:"number"}
