@@ -22,6 +22,12 @@ JOB_INPUT_ROOT = os.path.join(JOB_BASE, 'job_inputs')
 os.makedirs(JOB_STATE_ROOT, exist_ok=True)
 os.makedirs(JOB_INPUT_ROOT, exist_ok=True)
 
+# Identifiant stable pendant toute la vie du runtime Python.
+# Une réexécution des cellules ne doit pas considérer les jobs encore actifs
+# comme appartenant à un ancien runtime.
+if 'QWEN_RUNTIME_ID' not in globals():
+    QWEN_RUNTIME_ID = uuid.uuid4().hex
+
 JOB_EXECUTOR = ThreadPoolExecutor(max_workers=max(1, int(JOB_WORKERS)))
 JOB_LOCK = threading.Lock()
 JOB_FUTURES = {}
