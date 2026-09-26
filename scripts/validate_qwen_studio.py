@@ -79,6 +79,9 @@ assert "05b_video_faceswap.py" in code
 assert "05_video_faceswap.py" not in code
 assert code.count("05b_video_faceswap.py") == 1
 assert "v8.6" in nb_path.read_text(encoding="utf-8")
+assert "QWEN_STUDIO_SOURCE_REF" in code
+assert "api.github.com/repos/{REPO}/commits/main" in code
+assert "compile(source, local_path, \"exec\")" in code
 
 print("Qwen Studio validation passed.")
 
