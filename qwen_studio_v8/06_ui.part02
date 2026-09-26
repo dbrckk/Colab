@@ -33,7 +33,7 @@
             with gr.Row():
                 with gr.Column(scale=5, elem_classes=['glass']):
                     gr.Markdown(
-                        "### Face swap vidéo Ultra v8.5\n"
+                        "### Face swap vidéo Ultra v8.6\n"
                         "Suivi strict, garde-fous anti-occlusion, préservation de la bouche, "
                         "FaceFusion Ultra optionnel, analyse automatique, checkpoints, pause/reprise, "
                         "progression/ETA et annulation."
