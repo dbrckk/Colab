@@ -2,6 +2,17 @@
     except Exception as e:
         raise gr.Error(str(e))
 
+def _apply_video_preset(name):
+    name=str(name or 'Qualité maximale')
+    if name=='Rapide':
+        return 1, 19, 'medium', 3, 'builtin-ultra', True
+    if name=='Faible disque':
+        return 2, 18, 'medium', 3, 'auto', True
+    if name=='Équilibré':
+        return 1, 17, 'slow', 4, 'auto', True
+    # Qualité maximale
+    return 1, 16, 'slower', 5, 'auto', True
+
 def _submit_video_fs(src,video,frame_stride,max_frames,keep_audio,crf,preset,detect_every,preview_seconds,backend,target_face_position,reference_frame_number,reference_distance):
     try:
         j=submit_faceswap_video_job(src,video,frame_stride,max_frames,keep_audio,crf,preset,detect_every,0,backend,preview_seconds,target_face_position,reference_frame_number,reference_distance)
