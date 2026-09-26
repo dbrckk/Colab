@@ -1,5 +1,5 @@
 # v8.4 — Face swap vidéo Ultra (tracking + bouche + checkpoints + progression)
-import os, subprocess, shutil, uuid, time, json, signal, tarfile, hashlib
+import os, subprocess, shutil, uuid, time, json, signal, tarfile, hashlib, threading
 from pathlib import Path
 from fractions import Fraction
 
@@ -15,6 +15,7 @@ os.makedirs(VIDEO_CHECKPOINT_ROOT, exist_ok=True)
 os.makedirs(VIDEO_CANCEL_ROOT, exist_ok=True)
 os.makedirs(VIDEO_PAUSE_ROOT, exist_ok=True)
 VIDEO_ANALYSIS_CACHE = {}
+FACEFUSION_CACHE_THREAD = None
 
 class JobCancelled(Exception):
     pass
@@ -464,10 +465,70 @@ def _facefusion_ready():
         os.path.isfile(_facefusion_python())
     )
 
+def _restore_facefusion_cache():
+    if not VIDEO_FACEFUSION_CACHE_ENABLED or not USE_DRIVE:
+        return False
+    if not os.path.exists(VIDEO_FACEFUSION_CACHE_TAR) or os.path.getsize(VIDEO_FACEFUSION_CACHE_TAR)<1024*1024:
+        return False
+    try:
+        shutil.rmtree(VIDEO_FACEFUSION_ROOT,ignore_errors=True)
+        shutil.rmtree(VIDEO_FACEFUSION_VENV,ignore_errors=True)
+        with tarfile.open(VIDEO_FACEFUSION_CACHE_TAR,'r:gz') as tf:
+            tf.extractall('/content')
+        return _facefusion_ready()
+    except Exception:
+        shutil.rmtree(VIDEO_FACEFUSION_ROOT,ignore_errors=True)
+        shutil.rmtree(VIDEO_FACEFUSION_VENV,ignore_errors=True)
+        return False
+
+def _cache_facefusion_worker():
+    try:
+        if not _facefusion_ready() or not USE_DRIVE:
+            return
+        os.makedirs(VIDEO_FACEFUSION_CACHE_DIR,exist_ok=True)
+        local_tmp=f'/content/facefusion_cache_{uuid.uuid4().hex[:8]}.tar.gz'
+        drive_tmp=VIDEO_FACEFUSION_CACHE_TAR+'.part'
+        try:
+            with tarfile.open(local_tmp,'w:gz',compresslevel=1) as tf:
+                tf.add(VIDEO_FACEFUSION_ROOT,arcname=os.path.basename(VIDEO_FACEFUSION_ROOT))
+                tf.add(VIDEO_FACEFUSION_VENV,arcname=os.path.basename(VIDEO_FACEFUSION_VENV))
+            shutil.copy2(local_tmp,drive_tmp)
+            os.replace(drive_tmp,VIDEO_FACEFUSION_CACHE_TAR)
+        finally:
+            for p in (local_tmp,drive_tmp):
+                try:
+                    if os.path.exists(p):
+                        os.remove(p)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+def cache_facefusion_background():
+    global FACEFUSION_CACHE_THREAD
+    if not VIDEO_FACEFUSION_CACHE_ENABLED or not USE_DRIVE:
+        return
+    if FACEFUSION_CACHE_THREAD is not None and FACEFUSION_CACHE_THREAD.is_alive():
+        return
+    FACEFUSION_CACHE_THREAD=threading.Thread(target=_cache_facefusion_worker,daemon=True)
+    FACEFUSION_CACHE_THREAD.start()
+
+def facefusion_status_text():
+    ready=_facefusion_ready()
+    cache=os.path.exists(VIDEO_FACEFUSION_CACHE_TAR) if VIDEO_FACEFUSION_CACHE_ENABLED else False
+    cache_size=(os.path.getsize(VIDEO_FACEFUSION_CACHE_TAR)/1024**3) if cache else 0.0
+    return (
+        f'FaceFusion local: {"prêt" if ready else "non installé"}\n'
+        f'Cache Drive: {"présent" if cache else "absent"}'
+        + (f' ({cache_size:.2f} Go)' if cache else '')
+    )
+
 def ensure_facefusion_ultra():
     if not VIDEO_FACEFUSION_ENABLED:
         raise RuntimeError('FaceFusion Ultra est désactivé dans la configuration.')
     if _facefusion_ready():
+        return
+    if _restore_facefusion_cache():
         return
     if not shutil.which('git'):
         subprocess.run('apt-get -qq update && apt-get -qq install -y --no-install-recommends git',shell=True,check=True,timeout=600)
@@ -551,6 +612,7 @@ def run_facefusion_ultra(source_image,target_video,keep_audio=True,preview_secon
     if rc!=0 or not os.path.exists(out):
         raise RuntimeError('FaceFusion Ultra a échoué:\n'+'\n'.join(tail[-25:]))
     _update_job_progress(job_id,1,1,'FaceFusion Ultra','terminé')
+    cache_facefusion_background()
     return out, f'FaceFusion Ultra terminé | processors={processors} | masks={VIDEO_FACEFUSION_MASK_TYPES}\n{out}'
 
 def analyze_video_difficulty(video_path):
