@@ -129,8 +129,11 @@
                     tech_cleanup=gr.Button('🧹 Nettoyer cache vidéo',elem_classes=['secondary-btn'])
                 tech_test_out=gr.Textbox(label='Diagnostic vidéo',lines=7,interactive=False)
                 tech_cleanup_out=gr.Textbox(label='Nettoyage',lines=2,interactive=False)
+                tech_facefusion=gr.Textbox(label='FaceFusion / cache',value=facefusion_status_text(),lines=3,interactive=False)
+                tech_facefusion_refresh=gr.Button('↻ État FaceFusion',elem_classes=['secondary-btn'])
                 tech_test.click(_video_selftest,[],[tech_test_out])
                 tech_cleanup.click(_cleanup_video_cache,[],[tech_cleanup_out,tech_jobs])
+                tech_facefusion_refresh.click(_facefusion_status_ui,[],[tech_facefusion])
                 with gr.Accordion('Chemins des modèles',open=False):
                     gr.Markdown(f'**Heretic**  \n{HERETIC_PATH}\n\n**mmproj**  \n{MMPROJ_PATH}\n\n**DiT**  \n{DIT_PATH}\n\n**VAE**  \n{VAE_PATH}')
 
