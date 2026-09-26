@@ -28,6 +28,41 @@
             fs_btn.click(_submit_fs,[fs_src,fs_tgt],[fs_job,fs_submit_info,jobs_box])
             fs_refresh.click(_refresh_job,[fs_job],[fs_status,fs_out,fs_info,jobs_box])
 
+
+        with gr.Tab('🎬 Face swap vidéo HQ'):
+            with gr.Row():
+                with gr.Column(scale=5, elem_classes=['glass']):
+                    gr.Markdown(
+                        "### Face swap vidéo robuste\n"
+                        "Le suivi vérifie l’identité du visage à chaque frame et **préserve la frame originale** "
+                        "si une main, un objet, une autre tête ou une détection instable risque de créer un gros artefact. "
+                        "Aucun système ne peut garantir zéro défaut sur toutes les vidéos, mais ce mode privilégie la stabilité."
+                    )
+                    vfs_src=gr.Image(label='Visage source',type='filepath',height=250)
+                    vfs_tgt=gr.Video(label='Vidéo cible',height=300)
+                    with gr.Accordion('Qualité / robustesse',open=False):
+                        vfs_stride=gr.Slider(1,4,value=VIDEO_FACE_SWAP_FRAME_STRIDE,step=1,label='Frame stride • 1 recommandé')
+                        vfs_detect_every=gr.Slider(1,5,value=VIDEO_FACE_SWAP_DETECT_EVERY,step=1,label='Détection tous les N frames • 1 recommandé')
+                        vfs_max_frames=gr.Number(value=VIDEO_FACE_SWAP_MAX_FRAMES,precision=0,label='Max frames • 0 = aucune limite')
+                        vfs_keep_audio=gr.Checkbox(value=VIDEO_FACE_SWAP_KEEP_AUDIO,label='Conserver l’audio')
+                        with gr.Row():
+                            vfs_crf=gr.Slider(14,24,value=VIDEO_FACE_SWAP_CRF,step=1,label='CRF • 17 recommandé')
+                            vfs_preset=gr.Dropdown(['medium','slow','slower'],value=VIDEO_FACE_SWAP_PRESET,label='Encodage')
+                    vfs_btn=gr.Button('🎬 Lancer le face swap vidéo',variant='primary',elem_classes=['primary-btn'])
+                    vfs_job=gr.Textbox(visible=False)
+                    vfs_submit_info=gr.Textbox(label='État',lines=2,interactive=False)
+                    vfs_refresh=gr.Button('↻ Voir le résultat',elem_classes=['secondary-btn'])
+                    vfs_status=gr.Textbox(label='Progression',lines=4,interactive=False)
+                with gr.Column(scale=6, elem_classes=['glass']):
+                    vfs_out=gr.Video(label='Résultat vidéo',height=520)
+                    vfs_info=gr.Textbox(label='Détails',lines=3,interactive=False,visible=False)
+            vfs_btn.click(
+                _submit_video_fs,
+                [vfs_src,vfs_tgt,vfs_stride,vfs_max_frames,vfs_keep_audio,vfs_crf,vfs_preset,vfs_detect_every],
+                [vfs_job,vfs_submit_info,jobs_box]
+            )
+            vfs_refresh.click(_refresh_video_job,[vfs_job],[vfs_status,vfs_out,vfs_info,jobs_box])
+
         with gr.Tab('🔄 Récupérer'):
             with gr.Column(elem_classes=['glass']):
                 gr.Markdown('### Retrouver un résultat\nColle un Job ID après avoir changé d’onglet ou être revenu plus tard.')
