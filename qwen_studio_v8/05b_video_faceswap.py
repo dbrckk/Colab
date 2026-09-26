@@ -648,6 +648,9 @@ def run_facefusion_ultra(source_image,target_video,keep_audio=True,preview_secon
         '--face-enhancer-blend',str(int(VIDEO_FACEFUSION_ENHANCER_BLEND)),
         '--expression-restorer-model','live_portrait',
         '--expression-restorer-factor',str(int(VIDEO_FACEFUSION_EXPRESSION_FACTOR)),
+        '--output-video-preset',str(VIDEO_FACEFUSION_VIDEO_PRESET),
+        '--output-video-quality',str(int(VIDEO_FACEFUSION_VIDEO_QUALITY)),
+        '--output-audio-quality',str(int(VIDEO_FACEFUSION_AUDIO_QUALITY)),
         '--face-selector-mode','reference',
         '--reference-face-position',str(max(0,int(target_face_position or 0))),
         '--reference-frame-number',str(max(0,int(reference_frame_number or 0))),
@@ -695,9 +698,26 @@ def run_facefusion_ultra(source_image,target_video,keep_audio=True,preview_secon
     rc=proc.wait()
     if rc!=0 or not os.path.exists(out):
         raise RuntimeError('FaceFusion Ultra a échoué:\n'+'\n'.join(tail[-25:]))
+    if not keep_audio:
+        no_audio=out+'.noaudio.mp4'
+        p=subprocess.run(
+            ['ffmpeg','-y','-i',out,'-map','0:v:0','-c:v','copy','-an',no_audio],
+            capture_output=True,text=True
+        )
+        if p.returncode==0 and os.path.exists(no_audio):
+            os.replace(no_audio,out)
+        else:
+            try:
+                if os.path.exists(no_audio):
+                    os.remove(no_audio)
+            except Exception:
+                pass
     _update_job_progress(job_id,1,1,'FaceFusion Ultra','terminé')
     cache_facefusion_background()
-    return out, f'FaceFusion Ultra terminé | processors={processors} | masks={VIDEO_FACEFUSION_MASK_TYPES}\n{out}'
+    return out, (
+        f'FaceFusion Ultra terminé | processors={processors} | masks={VIDEO_FACEFUSION_MASK_TYPES} | '
+        f'video_quality={VIDEO_FACEFUSION_VIDEO_QUALITY} | preset={VIDEO_FACEFUSION_VIDEO_PRESET}\n{out}'
+    )
 
 def analyze_video_difficulty(video_path):
     import cv2, math
