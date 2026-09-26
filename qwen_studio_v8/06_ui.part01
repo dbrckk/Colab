@@ -2,17 +2,17 @@
     except Exception as e:
         raise gr.Error(str(e))
 
-def _submit_video_fs(src,video,frame_stride,max_frames,keep_audio,crf,preset,detect_every,preview_seconds,backend):
+def _submit_video_fs(src,video,frame_stride,max_frames,keep_audio,crf,preset,detect_every,preview_seconds,backend,target_face_position,reference_frame_number,reference_distance):
     try:
-        j=submit_faceswap_video_job(src,video,frame_stride,max_frames,keep_audio,crf,preset,detect_every,0,backend,preview_seconds)
+        j=submit_faceswap_video_job(src,video,frame_stride,max_frames,keep_audio,crf,preset,detect_every,0,backend,preview_seconds,target_face_position,reference_frame_number,reference_distance)
         return j['id'], f"Face swap vidéo lancé • {j['id']}", jobs_table()
     except Exception as e:
         raise gr.Error(str(e))
 
-def _submit_video_preview(src,video,frame_stride,keep_audio,crf,preset,detect_every,backend):
+def _submit_video_preview(src,video,frame_stride,keep_audio,crf,preset,detect_every,backend,target_face_position,reference_frame_number,reference_distance):
     try:
         seconds=max(1,int(VIDEO_FACE_SWAP_PREVIEW_SECONDS or 5))
-        j=submit_faceswap_video_job(src,video,frame_stride,0,False,crf,preset,detect_every,seconds,backend,0)
+        j=submit_faceswap_video_job(src,video,frame_stride,0,False,crf,preset,detect_every,seconds,backend,0,target_face_position,reference_frame_number,reference_distance)
         return j['id'], f"Aperçu {seconds}s lancé • {j['id']}", jobs_table()
     except Exception as e:
         raise gr.Error(str(e))
