@@ -14,6 +14,7 @@ os.makedirs(VIDEO_LOCAL_JOB_ROOT, exist_ok=True)
 os.makedirs(VIDEO_CHECKPOINT_ROOT, exist_ok=True)
 os.makedirs(VIDEO_CANCEL_ROOT, exist_ok=True)
 os.makedirs(VIDEO_PAUSE_ROOT, exist_ok=True)
+VIDEO_ANALYSIS_CACHE = {}
 
 class JobCancelled(Exception):
     pass
@@ -505,6 +506,12 @@ def analyze_video_difficulty(video_path):
     import cv2, math
     if not video_path:
         return 'Ajoute une vidéo à analyser.', 'builtin-ultra'
+    try:
+        key=(str(video_path),os.path.getsize(str(video_path)),int(os.path.getmtime(str(video_path))))
+        if key in VIDEO_ANALYSIS_CACHE:
+            return VIDEO_ANALYSIS_CACHE[key]
+    except Exception:
+        key=None
     init_faceswap()
     cap=cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
@@ -553,7 +560,7 @@ def analyze_video_difficulty(video_path):
     elif coverage<0.95: risk+=1; reasons.append('détection parfois instable')
     if multi_ratio>0.20: risk+=2; reasons.append('plusieurs visages fréquents')
     if avg_score<0.60: risk+=2; reasons.append('score de détection faible')
-    elif avg_score<0.72: risk+=1; reasons.append('score de détection moyen')
+    elif avg_score<float(VIDEO_FACE_SWAP_EASY_DET_SCORE): risk+=1; reasons.append('score de détection moyen')
     if avg_motion>0.08: risk+=2; reasons.append('mouvements importants')
     elif avg_motion>0.04: risk+=1; reasons.append('mouvements modérés')
     if avg_area<0.018: risk+=2; reasons.append('visage petit dans l’image')
@@ -567,7 +574,10 @@ def analyze_video_difficulty(video_path):
     )
     if reasons:
         summary += '\nFacteurs: ' + ', '.join(reasons)
-    return summary,recommendation
+    result=(summary,recommendation)
+    if key is not None:
+        VIDEO_ANALYSIS_CACHE[key]=result
+    return result
 
 def cleanup_video_cache(max_age_hours=None,keep_recent=None):
     max_age=float(max_age_hours if max_age_hours is not None else VIDEO_FACE_SWAP_CACHE_MAX_AGE_HOURS)
@@ -592,7 +602,8 @@ def video_selftest_report():
     try:
         tests.append(('IoU identique',abs(_bbox_iou([0,0,10,10],[0,0,10,10])-1.0)<1e-6))
         tests.append(('IoU séparé',_bbox_iou([0,0,10,10],[20,20,30,30])==0.0))
-        tests.append(('Dossiers jobs',os.path.isdir(VIDEO_JOB_ROOT)))
+        tests.append(('Dossier local vidéo',os.path.isdir(VIDEO_LOCAL_JOB_ROOT)))
+        tests.append(('Dossier checkpoints persistants',os.path.isdir(VIDEO_CHECKPOINT_ROOT)))
         tests.append(('FFmpeg ou installation lazy',bool(shutil.which('ffmpeg')) or True))
         tests.append(('FaceFusion config',bool(VIDEO_FACEFUSION_VERSION)))
     except Exception:
@@ -600,6 +611,32 @@ def video_selftest_report():
     ok=sum(1 for _,v in tests if v)
     lines=[f'{name}: '+('OK' if value else 'ERREUR') for name,value in tests]
     return f'Self-test vidéo: {ok}/{len(tests)} OK\n'+'\n'.join(lines)
+
+def _resolve_video_backend(target_video,requested_backend='auto',job_id=None):
+    requested=str(requested_backend or 'auto').lower()
+    if requested in ('facefusion','facefusion-ultra','facefusion ultra'):
+        return 'facefusion-ultra'
+    if requested in ('builtin','builtin-ultra','builtin ultra'):
+        return 'builtin-ultra'
+    if not VIDEO_FACEFUSION_ENABLED:
+        return 'builtin-ultra'
+    try:
+        summary,recommended=analyze_video_difficulty(target_video)
+        j=load_job(job_id) if job_id else None
+        if j:
+            j['analysis']=summary
+            j['info']='Analyse automatique terminée.\n'+summary
+            save_job(j)
+        if recommended=='facefusion-ultra':
+            if _facefusion_ready() or VIDEO_FACEFUSION_AUTO_INSTALL_ON_HARD:
+                return 'facefusion-ultra'
+        return 'builtin-ultra'
+    except Exception as e:
+        j=load_job(job_id) if job_id else None
+        if j:
+            j['info']=f'Analyse automatique indisponible: {type(e).__name__}: {e}\nFallback builtin-ultra.'
+            save_job(j)
+        return 'builtin-ultra'
 
 def _choose_mode(video_path):
     if not VIDEO_FACE_SWAP_AUTO_MODE:
@@ -629,7 +666,6 @@ def _encode_frames(frames_out,fps,target_video,out,keep_audio,crf,preset,preview
 
 def video_face_swap(source_image,target_video,frame_stride=1,max_frames=0,keep_audio=True,crf=17,preset='slow',detect_every=1,preview_seconds=0,job_id=None,backend='auto'):
     import cv2
-    init_faceswap()
     ensure_ffmpeg()
     frame_stride=max(1,int(frame_stride or 1))
     detect_every=max(1,int(detect_every or 1))
@@ -637,13 +673,11 @@ def video_face_swap(source_image,target_video,frame_stride=1,max_frames=0,keep_a
     preview_seconds=max(0,int(preview_seconds or 0))
     crf=max(10,min(30,int(crf or 17)))
     preset=str(preset or 'slow')
-    mode=_choose_mode(target_video)
-    requested_backend=str(backend or 'auto').lower()
-    use_facefusion = requested_backend in ('facefusion','facefusion-ultra','facefusion ultra')
-    if requested_backend=='auto' and VIDEO_FACEFUSION_ENABLED and _facefusion_ready():
-        use_facefusion=True
-    if use_facefusion:
+    resolved_backend=_resolve_video_backend(target_video,backend,job_id)
+    if resolved_backend=='facefusion-ultra':
         return run_facefusion_ultra(source_image,target_video,keep_audio,preview_seconds,job_id)
+    init_faceswap()
+    mode=_choose_mode(target_video)
     if mode=='ultra':
         detect_every=1
         crf=min(crf,int(VIDEO_FACE_SWAP_HARD_MODE_CRF))
@@ -659,6 +693,7 @@ def video_face_swap(source_image,target_video,frame_stride=1,max_frames=0,keep_a
     frames_out=os.path.join(work,'frames_out')
     os.makedirs(frames_in,exist_ok=True)
     os.makedirs(frames_out,exist_ok=True)
+    restored_checkpoint_end=_restore_video_checkpoints(job_id,frames_out)
 
     source_fps=_ffprobe_fps(target_video)
     fps=max(1.0,source_fps/float(frame_stride))
@@ -776,8 +811,8 @@ def video_face_swap(source_image,target_video,frame_stride=1,max_frames=0,keep_a
         _clear_persistent_video_checkpoints(job_id)
 
     info=(
-        f'Face swap vidéo terminé | mode={mode} | {width}x{height} | fps={fps:.3f} | '
-        f'frames={processed} | swap={swapped} | protégées={skipped} | reprises={resumed} | '
+        f'Face swap vidéo terminé | backend={resolved_backend} | mode={mode} | {width}x{height} | fps={fps:.3f} | '
+        f'frames={processed} | swap={swapped} | protégées={skipped} | reprises={resumed} | checkpoint_restauré={restored_checkpoint_end} | '
         f'stride={frame_stride} | detect_every={detect_every} | CRF={crf} | preset={preset} | '
         f'preview={preview_seconds}s\n{out}'
     )
