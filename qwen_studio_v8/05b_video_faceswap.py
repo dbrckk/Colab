@@ -239,6 +239,98 @@ def _post_blend_face(original,swapped,sig):
         result=swapped
     return _mouth_preserve(original,result,sig)
 
+def _facefusion_python():
+    return os.path.join(VIDEO_FACEFUSION_VENV,'bin','python')
+
+def _facefusion_ready():
+    return (
+        os.path.isfile(os.path.join(VIDEO_FACEFUSION_ROOT,'facefusion.py')) and
+        os.path.isfile(_facefusion_python())
+    )
+
+def ensure_facefusion_ultra():
+    if not VIDEO_FACEFUSION_ENABLED:
+        raise RuntimeError('FaceFusion Ultra est désactivé dans la configuration.')
+    if _facefusion_ready():
+        return
+    if not shutil.which('git'):
+        subprocess.run('apt-get -qq update && apt-get -qq install -y --no-install-recommends git',shell=True,check=True,timeout=600)
+    if not os.path.isdir(os.path.join(VIDEO_FACEFUSION_ROOT,'.git')):
+        shutil.rmtree(VIDEO_FACEFUSION_ROOT,ignore_errors=True)
+        subprocess.run([
+            'git','clone','--depth','1','--branch',str(VIDEO_FACEFUSION_VERSION),
+            'https://github.com/facefusion/facefusion.git',VIDEO_FACEFUSION_ROOT
+        ],check=True,timeout=900)
+    if not os.path.isfile(_facefusion_python()):
+        subprocess.run(['python','-m','venv',VIDEO_FACEFUSION_VENV],check=True,timeout=300)
+    venv_bin=os.path.join(VIDEO_FACEFUSION_VENV,'bin')
+    env=os.environ.copy()
+    env['PATH']=venv_bin+os.pathsep+env.get('PATH','')
+    subprocess.run([_facefusion_python(),'-m','pip','install','-U','pip'],check=True,timeout=600,env=env)
+    subprocess.run(
+        [_facefusion_python(),'install.py','cuda@12','--skip-conda'],
+        cwd=VIDEO_FACEFUSION_ROOT,check=True,timeout=1800,env=env
+    )
+
+def run_facefusion_ultra(source_image,target_video,keep_audio=True,preview_seconds=0,job_id=None):
+    ensure_ffmpeg()
+    ensure_facefusion_ultra()
+    out=_new_output_video('facefusion_ultra_preview' if int(preview_seconds or 0)>0 else 'facefusion_ultra')
+    py=_facefusion_python()
+    processors=['face_swapper']
+    if VIDEO_FACEFUSION_EXPRESSION_RESTORER:
+        processors.append('expression_restorer')
+    if VIDEO_FACEFUSION_FACE_ENHANCER:
+        processors.append('face_enhancer')
+    cmd=[
+        py,'facefusion.py','headless-run',
+        '--workflow-strategy','disk',
+        '--processors',*processors,
+        '--face-mask-types',*str(VIDEO_FACEFUSION_MASK_TYPES).split(),
+        '--face-enhancer-model','gfpgan_1.4',
+        '--face-enhancer-blend',str(int(VIDEO_FACEFUSION_ENHANCER_BLEND)),
+        '--expression-restorer-model','live_portrait',
+        '--expression-restorer-factor',str(int(VIDEO_FACEFUSION_EXPRESSION_FACTOR)),
+        '--execution-providers','cuda',
+        '-s',source_image,
+        '-t',target_video,
+        '-o',out,
+    ]
+    if int(preview_seconds or 0)>0:
+        fps=_ffprobe_fps(target_video)
+        trim_end=max(1,int(round(float(preview_seconds)*fps)))
+        cmd += ['--trim-frame-end',str(trim_end)]
+    _update_job_progress(job_id,0,1,'FaceFusion Ultra','initialisation / modèles')
+    env=os.environ.copy()
+    env['PATH']=os.path.join(VIDEO_FACEFUSION_VENV,'bin')+os.pathsep+env.get('PATH','')
+    proc=subprocess.Popen(
+        cmd,cwd=VIDEO_FACEFUSION_ROOT,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,
+        text=True,bufsize=1,env=env
+    )
+    tail=[]
+    while True:
+        if _is_cancel_requested(job_id):
+            proc.terminate()
+            try: proc.wait(timeout=10)
+            except Exception: proc.kill()
+            raise JobCancelled('Annulation demandée pendant FaceFusion Ultra.')
+        line=proc.stdout.readline() if proc.stdout else ''
+        if line:
+            tail.append(line.rstrip())
+            tail=tail[-60:]
+            j=load_job(job_id) if job_id else None
+            if j:
+                j['info']='FaceFusion Ultra en cours…\n'+('\n'.join(tail[-5:]))
+                save_job(j)
+        if proc.poll() is not None:
+            break
+        time.sleep(0.1)
+    rc=proc.wait()
+    if rc!=0 or not os.path.exists(out):
+        raise RuntimeError('FaceFusion Ultra a échoué:\n'+'\n'.join(tail[-25:]))
+    _update_job_progress(job_id,1,1,'FaceFusion Ultra','terminé')
+    return out, f'FaceFusion Ultra terminé | processors={processors} | masks={VIDEO_FACEFUSION_MASK_TYPES}\n{out}'
+
 def _choose_mode(video_path):
     if not VIDEO_FACE_SWAP_AUTO_MODE:
         return 'ultra'
@@ -261,7 +353,7 @@ def _encode_frames(frames_out,fps,target_video,out,keep_audio,crf,preset,preview
     else:
         shutil.copy2(video_only,out)
 
-def video_face_swap(source_image,target_video,frame_stride=1,max_frames=0,keep_audio=True,crf=17,preset='slow',detect_every=1,preview_seconds=0,job_id=None):
+def video_face_swap(source_image,target_video,frame_stride=1,max_frames=0,keep_audio=True,crf=17,preset='slow',detect_every=1,preview_seconds=0,job_id=None,backend='auto'):
     import cv2
     init_faceswap()
     ensure_ffmpeg()
@@ -272,6 +364,12 @@ def video_face_swap(source_image,target_video,frame_stride=1,max_frames=0,keep_a
     crf=max(10,min(30,int(crf or 17)))
     preset=str(preset or 'slow')
     mode=_choose_mode(target_video)
+    requested_backend=str(backend or 'auto').lower()
+    use_facefusion = requested_backend in ('facefusion','facefusion-ultra','facefusion ultra')
+    if requested_backend=='auto' and VIDEO_FACEFUSION_ENABLED and _facefusion_ready():
+        use_facefusion=True
+    if use_facefusion:
+        return run_facefusion_ultra(source_image,target_video,keep_audio,preview_seconds,job_id)
     if mode=='ultra':
         detect_every=1
         crf=min(crf,int(VIDEO_FACE_SWAP_HARD_MODE_CRF))
@@ -394,7 +492,7 @@ def video_face_swap(source_image,target_video,frame_stride=1,max_frames=0,keep_a
     )
     return out,info
 
-def submit_faceswap_video_job(src,video,frame_stride=1,max_frames=0,keep_audio=True,crf=17,preset='slow',detect_every=1,preview_seconds=0):
+def submit_faceswap_video_job(src,video,frame_stride=1,max_frames=0,keep_audio=True,crf=17,preset='slow',detect_every=1,preview_seconds=0,backend='auto'):
     if not src or not video:
         raise ValueError('Ajoute un visage source et une vidéo cible')
     temp=uuid.uuid4().hex[:8]
@@ -406,6 +504,7 @@ def submit_faceswap_video_job(src,video,frame_stride=1,max_frames=0,keep_audio=T
         'keep_audio':bool(keep_audio),'crf':int(crf),
         'preset':str(preset),'detect_every':int(detect_every),
         'preview_seconds':int(preview_seconds or 0),
+        'backend':str(backend or 'auto'),
     })
 
 def _format_video_status(job):
@@ -444,7 +543,7 @@ def _execute_job(job_id):
             p.get('frame_stride',1),p.get('max_frames',0),
             p.get('keep_audio',True),p.get('crf',17),
             p.get('preset','slow'),p.get('detect_every',1),
-            p.get('preview_seconds',0),job_id
+            p.get('preview_seconds',0),job_id,p.get('backend','auto')
         )
         job=load_job(job_id) or job
         job['status']='done'
