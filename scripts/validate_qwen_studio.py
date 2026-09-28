@@ -154,3 +154,23 @@ assert "j.get('runtime_id') == QWEN_RUNTIME_ID" in backend
 assert "_encode_checkpoint_chunks(" in video
 assert "cv2.VideoCapture" in video
 assert "_restore_video_checkpoints(job_id,frames_out)" not in video or "return _latest_checkpoint_end(job_id)" in video
+
+
+# VIDEO_* configuration references must all be defined by 01_setup.py.
+setup_tree = ast.parse(setup)
+defined_video = set()
+for node in ast.walk(setup_tree):
+    if isinstance(node, (ast.Assign, ast.AnnAssign)):
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        for target in targets:
+            if isinstance(target, ast.Name) and target.id.startswith("VIDEO_"):
+                defined_video.add(target.id)
+
+referenced_video = {
+    node.id
+    for node in ast.walk(ast.parse(video + "\n" + ui))
+    if isinstance(node, ast.Name) and node.id.startswith("VIDEO_")
+}
+missing_video = sorted(referenced_video - defined_video)
+assert not missing_video, "Undefined VIDEO_* configuration names: " + ", ".join(missing_video)
+print(f"VIDEO_* configuration references passed ({len(referenced_video)} referenced).")
