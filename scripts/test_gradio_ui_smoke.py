@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import inspect
 
 ROOT = Path(__file__).resolve().parents[1]
 MOD = ROOT / "qwen_studio_v8"
@@ -67,3 +68,15 @@ exec(compiled, ns)
 assert "demo" in ns, "Gradio Blocks object was not created"
 assert ns["demo"] is not None
 print("Gradio UI smoke test passed.")
+
+
+import gradio as gr
+
+launch_sig = inspect.signature(gr.Blocks.launch)
+for name in ["share", "debug", "inline", "quiet", "prevent_thread_lock", "show_error"]:
+    assert name in launch_sig.parameters, f"Unsupported Blocks.launch argument: {name}"
+
+queue_sig = inspect.signature(gr.Blocks.queue)
+assert "default_concurrency_limit" in queue_sig.parameters, "Blocks.queue no longer accepts default_concurrency_limit"
+
+print("Gradio launch/queue API compatibility passed.")
