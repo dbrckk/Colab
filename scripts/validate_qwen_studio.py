@@ -84,6 +84,49 @@ for token in [
 ]:
     assert token in ui, f"Missing UI feature: {token}"
 
+
+class GradioComponentValidator(ast.NodeVisitor):
+    """Static checks for constructor mistakes that Python syntax alone cannot catch."""
+    def __init__(self):
+        self.errors = []
+
+    @staticmethod
+    def _number(node):
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return float(node.value)
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub) and isinstance(node.operand, ast.Constant) and isinstance(node.operand.value, (int, float)):
+            return -float(node.operand.value)
+        return None
+
+    def visit_Call(self, node):
+        if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.value.id == "gr":
+            component = node.func.attr
+            if component == "Slider":
+                minimum = self._number(node.args[0]) if len(node.args) >= 1 else None
+                maximum = self._number(node.args[1]) if len(node.args) >= 2 else None
+                value = None
+                for kw in node.keywords:
+                    if kw.arg == "minimum":
+                        minimum = self._number(kw.value)
+                    elif kw.arg == "maximum":
+                        maximum = self._number(kw.value)
+                    elif kw.arg == "value":
+                        value = self._number(kw.value)
+                if minimum is not None and maximum is not None and minimum >= maximum:
+                    self.errors.append(
+                        f"gr.Slider line {getattr(node, 'lineno', '?')}: minimum={minimum} must be < maximum={maximum}"
+                    )
+                if minimum is not None and maximum is not None and value is not None and not (minimum <= value <= maximum):
+                    self.errors.append(
+                        f"gr.Slider line {getattr(node, 'lineno', '?')}: value={value} outside [{minimum}, {maximum}]"
+                    )
+        self.generic_visit(node)
+
+ui_ast = ast.parse(ui)
+ui_validator = GradioComponentValidator()
+ui_validator.visit(ui_ast)
+assert not ui_validator.errors, "\n".join(ui_validator.errors)
+
 nb_path = ROOT / "Qwen_Image_2_1_Heretic_GGUF_Gradio_v8_PremiumUX.ipynb"
 nb = json.loads(nb_path.read_text(encoding="utf-8"))
 assert nb.get("nbformat") == 4
