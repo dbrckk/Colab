@@ -166,11 +166,24 @@ for node in ast.walk(setup_tree):
             if isinstance(target, ast.Name) and target.id.startswith("VIDEO_"):
                 defined_video.add(target.id)
 
+combined_video_ui_tree = ast.parse(video + "\n" + ui)
+
+locally_defined_video = set()
+for node in ast.walk(combined_video_ui_tree):
+    if isinstance(node, (ast.Assign, ast.AnnAssign)):
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        for target in targets:
+            if isinstance(target, ast.Name) and target.id.startswith("VIDEO_"):
+                locally_defined_video.add(target.id)
+
 referenced_video = {
     node.id
-    for node in ast.walk(ast.parse(video + "\n" + ui))
-    if isinstance(node, ast.Name) and node.id.startswith("VIDEO_")
+    for node in ast.walk(combined_video_ui_tree)
+    if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and node.id.startswith("VIDEO_")
 }
-missing_video = sorted(referenced_video - defined_video)
+missing_video = sorted(referenced_video - defined_video - locally_defined_video)
 assert not missing_video, "Undefined VIDEO_* configuration names: " + ", ".join(missing_video)
-print(f"VIDEO_* configuration references passed ({len(referenced_video)} referenced).")
+print(
+    f"VIDEO_* references passed "
+    f"({len(referenced_video)} referenced, {len(locally_defined_video)} internal)."
+)
