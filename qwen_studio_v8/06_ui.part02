@@ -63,7 +63,7 @@
                     )
                     with gr.Accordion('Qualité / robustesse',open=False):
                         vfs_stride=gr.Slider(1,4,value=VIDEO_FACE_SWAP_FRAME_STRIDE,step=1,label='Frame stride • 1 recommandé')
-                        vfs_detect_every=gr.Slider(1,1,value=1,step=1,label='Détection visage • chaque frame en mode Ultra',interactive=False)
+                        vfs_detect_every=gr.Number(value=1,precision=0,label='Détection visage • chaque frame en mode Ultra',interactive=False)
                         vfs_max_frames=gr.Number(value=VIDEO_FACE_SWAP_MAX_FRAMES,precision=0,label='Max frames • 0 = aucune limite')
                         vfs_preview_seconds=gr.Number(value=VIDEO_FACE_SWAP_PREFLIGHT_SECONDS,precision=0,label='Aperçu automatique avant rendu (secondes)')
                         vfs_keep_audio=gr.Checkbox(value=VIDEO_FACE_SWAP_KEEP_AUDIO,label='Conserver l’audio')
