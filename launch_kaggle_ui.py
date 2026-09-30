@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import os
+import importlib.util
+import subprocess
+import sys
 from pathlib import Path
 
 def load_local_env() -> None:
@@ -15,6 +18,21 @@ def load_local_env() -> None:
         os.environ.setdefault(key.strip(), value.strip())
 
 load_local_env()
+
+def ensure_dependencies() -> None:
+    missing = []
+    if importlib.util.find_spec("gradio") is None:
+        missing.append("gradio>=5.0")
+    if shutil.which("kaggle") is None and importlib.util.find_spec("kaggle") is None:
+        missing.append("kaggle>=1.7")
+    if missing:
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", *missing],
+            check=True,
+        )
+
+import shutil
+ensure_dependencies()
 
 from kaggle_app.config import SETTINGS
 from kaggle_app.ui import build_ui
