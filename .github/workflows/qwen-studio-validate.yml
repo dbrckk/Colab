@@ -5,19 +5,13 @@ on:
     paths:
       - "qwen_studio_v8/**"
       - "Qwen_Image_2_1_Heretic_GGUF_Gradio_v8_PremiumUX.ipynb"
+      - "kaggle_app/**"
+      - "kaggle_worker/**"
+      - "launch_kaggle_ui.py"
+      - "requirements-kaggle-ui.txt"
       - "scripts/validate_qwen_studio.py"
       - "scripts/test_video_checkpoint.py"
       - "scripts/test_gradio_ui_smoke.py"
-      - "scripts/test_kaggle_ui_smoke.py"
-      - "scripts/test_kaggle_controller.py"
-      - "requirements-kaggle-ui.txt"
-      - "launch_kaggle_ui.py"
-      - "kaggle_worker/**"
-      - "kaggle_app/**"
-      - "kaggle_app/**"
-      - "kaggle_worker/**"
-      - "launch_kaggle_ui.py"
-      - "requirements-kaggle-ui.txt"
       - "scripts/test_kaggle_controller.py"
       - "scripts/test_kaggle_ui_smoke.py"
       - ".github/workflows/qwen-studio-validate.yml"
@@ -25,9 +19,15 @@ on:
     paths:
       - "qwen_studio_v8/**"
       - "Qwen_Image_2_1_Heretic_GGUF_Gradio_v8_PremiumUX.ipynb"
+      - "kaggle_app/**"
+      - "kaggle_worker/**"
+      - "launch_kaggle_ui.py"
+      - "requirements-kaggle-ui.txt"
       - "scripts/validate_qwen_studio.py"
       - "scripts/test_video_checkpoint.py"
       - "scripts/test_gradio_ui_smoke.py"
+      - "scripts/test_kaggle_controller.py"
+      - "scripts/test_kaggle_ui_smoke.py"
   workflow_dispatch:
 
 permissions:
@@ -41,7 +41,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install Gradio for UI smoke test
+      - name: Install Gradio for UI smoke tests
         run: python -m pip install --disable-pip-version-check --quiet gradio
       - name: Validate notebook modules
         run: python scripts/validate_qwen_studio.py
