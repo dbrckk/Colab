@@ -8,6 +8,18 @@ on:
       - "scripts/validate_qwen_studio.py"
       - "scripts/test_video_checkpoint.py"
       - "scripts/test_gradio_ui_smoke.py"
+      - "scripts/test_kaggle_ui_smoke.py"
+      - "scripts/test_kaggle_controller.py"
+      - "requirements-kaggle-ui.txt"
+      - "launch_kaggle_ui.py"
+      - "kaggle_worker/**"
+      - "kaggle_app/**"
+      - "kaggle_app/**"
+      - "kaggle_worker/**"
+      - "launch_kaggle_ui.py"
+      - "requirements-kaggle-ui.txt"
+      - "scripts/test_kaggle_controller.py"
+      - "scripts/test_kaggle_ui_smoke.py"
       - ".github/workflows/qwen-studio-validate.yml"
   pull_request:
     paths:
@@ -37,3 +49,7 @@ jobs:
         run: python scripts/test_video_checkpoint.py
       - name: Gradio UI smoke test
         run: python scripts/test_gradio_ui_smoke.py
+      - name: Kaggle controller unit test
+        run: python scripts/test_kaggle_controller.py
+      - name: Kaggle Studio UI smoke test
+        run: python scripts/test_kaggle_ui_smoke.py
