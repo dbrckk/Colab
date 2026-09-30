@@ -183,13 +183,48 @@ class KaggleController:
         username = self.settings.kaggle_username
         slug = slugify(f"qwen-studio-{job['id']}")
         kernel_ref = f"{username}/{slug}"
-        shutil.copy2(self.settings.worker_path, folder / "worker.py")
+
+        worker_source = self.settings.worker_path.read_text(encoding="utf-8")
+        notebook = {
+            "cells": [
+                {
+                    "cell_type": "markdown",
+                    "metadata": {},
+                    "source": [
+                        "# Qwen Kaggle Worker\n",
+                        "Notebook généré automatiquement par Qwen Kaggle Studio.\n",
+                    ],
+                },
+                {
+                    "cell_type": "code",
+                    "execution_count": None,
+                    "metadata": {},
+                    "outputs": [],
+                    "source": worker_source.splitlines(keepends=True),
+                },
+            ],
+            "metadata": {
+                "kernelspec": {
+                    "display_name": "Python 3",
+                    "language": "python",
+                    "name": "python3",
+                },
+                "language_info": {"name": "python", "version": "3.11"},
+            },
+            "nbformat": 4,
+            "nbformat_minor": 5,
+        }
+        (folder / "job.ipynb").write_text(
+            json.dumps(notebook, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
         metadata = {
             "id": kernel_ref,
             "title": slug,
-            "code_file": "worker.py",
+            "code_file": "job.ipynb",
             "language": "python",
-            "kernel_type": "script",
+            "kernel_type": "notebook",
             "is_private": True,
             "enable_gpu": True,
             "enable_internet": True,
