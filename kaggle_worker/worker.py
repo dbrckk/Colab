@@ -11,6 +11,7 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+WORKER_VERSION = "1.2"
 WORK = Path("/kaggle/working")
 OUT = WORK / "outputs"
 OUT.mkdir(parents=True, exist_ok=True)
@@ -32,7 +33,14 @@ def pip_install(*packages: str):
     )
 
 def write_result(status: str, **extra):
-    payload = {"job_id": CONFIG.get("job_id"), "status": status, **extra}
+    payload = {
+        "job_id": CONFIG.get("job_id"),
+        "status": status,
+        "task": CONFIG.get("task"),
+        "worker_version": WORKER_VERSION,
+        "generated_at": __import__("time").strftime("%Y-%m-%d %H:%M:%S"),
+        **extra,
+    }
     (OUT / "result.json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2),
         encoding="utf-8",
@@ -237,7 +245,15 @@ def run_image():
     p = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=10800)
     if p.returncode != 0 or not out.exists():
         raise RuntimeError(((p.stdout or "") + "\n" + (p.stderr or ""))[-7000:])
-    write_result("done", task="image", seed=seed, files=[out.name])
+    write_result(
+        "done",
+        seed=seed,
+        width=width,
+        height=height,
+        steps=int(CONFIG.get("steps", 25)),
+        cfg=float(CONFIG.get("cfg", 1.0)),
+        files=[out.name],
+    )
 
 def run_image_edit():
     sdcli = ensure_sdcli()
@@ -292,7 +308,16 @@ def run_image_edit():
     p = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=10800)
     if p.returncode != 0 or not out.exists():
         raise RuntimeError(((p.stdout or "") + "\n" + (p.stderr or ""))[-7000:])
-    write_result("done", task="image_edit", seed=seed, files=[out.name])
+    write_result(
+        "done",
+        seed=seed,
+        width=width,
+        height=height,
+        steps=int(CONFIG.get("steps", 25)),
+        cfg=float(CONFIG.get("cfg", 1.0)),
+        reference_image=source.name,
+        files=[out.name],
+    )
 
 def run_video_faceswap():
     source_name = CONFIG.get("source_image")
@@ -342,7 +367,12 @@ def run_video_faceswap():
     p = subprocess.run(cmd, cwd=ff, capture_output=True, text=True, timeout=10800)
     if p.returncode != 0 or not out.exists():
         raise RuntimeError(((p.stdout or "") + "\n" + (p.stderr or ""))[-7000:])
-    write_result("done", task="video_faceswap", files=[out.name])
+    write_result(
+        "done",
+        processors=["face_swapper", "expression_restorer", "face_enhancer"],
+        masks=["occlusion", "region"],
+        files=[out.name],
+    )
 
 def main():
     task = CONFIG.get("task", "image")
