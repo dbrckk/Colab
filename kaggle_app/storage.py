@@ -28,6 +28,14 @@ def import_outputs(job_id: str, source_dir: Path, storage_root: Path) -> list[tu
     imported: list[tuple[Path, str]] = []
     seen: set[str] = set()
 
+    existing_by_digest: dict[str, Path] = {}
+    for current in dest.iterdir():
+        if current.is_file():
+            try:
+                existing_by_digest[_sha1(current)] = current
+            except Exception:
+                pass
+
     for src in sorted(source_dir.rglob("*")):
         if not src.is_file() or src.name.startswith("."):
             continue
@@ -35,9 +43,16 @@ def import_outputs(job_id: str, source_dir: Path, storage_root: Path) -> list[tu
         if digest in seen:
             continue
         seen.add(digest)
+
+        existing = existing_by_digest.get(digest)
+        if existing is not None:
+            imported.append((existing, kind_for(existing)))
+            continue
+
         target = dest / src.name
         if target.exists():
             target = dest / f"{target.stem}_{digest[:10]}{target.suffix}"
         shutil.copy2(src, target)
+        existing_by_digest[digest] = target
         imported.append((target, kind_for(target)))
     return imported
