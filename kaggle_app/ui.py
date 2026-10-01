@@ -11,9 +11,15 @@ from .kaggle_runner import KaggleController
 controller = KaggleController()
 
 CSS = """
-.gradio-container {max-width: 1180px !important; margin: 0 auto !important;}
+.gradio-container {max-width: 1180px !important; margin: 0 auto !important; padding-bottom: 48px !important;}
 .hero {padding: 18px; border-radius: 20px; border: 1px solid rgba(127,127,127,.2); margin-bottom: 12px;}
-.primary-action {min-height: 50px !important; font-weight: 700 !important;}
+.primary-action {min-height: 52px !important; font-weight: 700 !important;}
+button {touch-action: manipulation; min-height: 44px !important;}
+textarea, input {font-size: 16px !important;}
+@media (max-width: 720px) {
+  .gradio-container {padding-left: 8px !important; padding-right: 8px !important;}
+  .hero {padding: 14px; border-radius: 16px;}
+}
 """
 
 def _jobs_table():
@@ -50,6 +56,20 @@ def _submit(task, prompt, negative, steps, cfg, seed, aspect, source, target):
             target_video=target,
         )
         return job_id, f"Job {job_id} ajouté à la file Kaggle.", _jobs_table()
+    except Exception as e:
+        raise gr.Error(str(e))
+
+def _retry_job(job_id):
+    try:
+        new_id = controller.retry(job_id)
+        return new_id, f"Relance créée : {new_id}", _jobs_table()
+    except Exception as e:
+        raise gr.Error(str(e))
+
+def _delete_job(job_id):
+    try:
+        msg = controller.delete_local_job(job_id)
+        return msg, _jobs_table()
     except Exception as e:
         raise gr.Error(str(e))
 
@@ -110,6 +130,7 @@ def build_ui():
                     status = gr.Textbox(label="État", lines=5, interactive=False)
                     with gr.Row():
                         refresh = gr.Button("↻ Actualiser")
+                        retry = gr.Button("↻ Relancer")
                         cancel = gr.Button("⛔ Annuler le job", variant="stop")
                     gallery = gr.Gallery(label="Images récupérées", columns=2, height=420)
                     video = gr.Video(label="Vidéo récupérée")
@@ -125,7 +146,10 @@ def build_ui():
             )
             reload_jobs = gr.Button("↻ Rafraîchir")
             lookup = gr.Textbox(label="Job ID à ouvrir")
-            open_job = gr.Button("Ouvrir le job", variant="primary")
+            with gr.Row():
+                open_job = gr.Button("Ouvrir le job", variant="primary")
+                retry_job_btn = gr.Button("↻ Relancer le job")
+                delete_job_btn = gr.Button("🗑 Supprimer localement", variant="stop")
             lib_status = gr.Textbox(label="État", lines=5, interactive=False)
             lib_gallery = gr.Gallery(label="Images", columns=3)
             lib_video = gr.Video(label="Vidéo")
@@ -152,9 +176,12 @@ def build_ui():
             [job_id, submit_info, jobs],
         )
         refresh.click(_refresh, [job_id], [status, gallery, video, files, jobs])
+        retry.click(_retry_job, [job_id], [job_id, submit_info, jobs])
         cancel.click(_cancel_job, [job_id], [submit_info, jobs])
         reload_jobs.click(_jobs_table, [], [jobs])
         open_job.click(_refresh, [lookup], [lib_status, lib_gallery, lib_video, lib_files, jobs])
+        retry_job_btn.click(_retry_job, [lookup], [lookup, lib_status, jobs])
+        delete_job_btn.click(_delete_job, [lookup], [lib_status, jobs])
         save.click(
             _save_credentials,
             [username, api_token, legacy_key, persist],
