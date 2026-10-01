@@ -45,4 +45,5 @@ if __name__ == "__main__":
         inline=False,
         show_error=True,
         prevent_thread_lock=False,
+        allowed_paths=[str(SETTINGS.storage_root)],
     )
