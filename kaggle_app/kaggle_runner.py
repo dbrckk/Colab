@@ -17,7 +17,7 @@ from typing import Any
 
 from .config import SETTINGS, Settings
 from .db import JobDB
-from .storage import import_outputs
+from .storage import import_outputs, scan_outputs
 
 TERMINAL_OK = ("complete", "completed")
 TERMINAL_BAD = ("error", "failed", "cancelled", "canceled")
@@ -216,8 +216,9 @@ class KaggleController:
                     ["kernels", "output", kernel_ref, "-p", str(download), "-o", "-q"],
                     timeout=900,
                 )
+                staged_artifacts = scan_outputs(download)
+                result_manifest = self._validate_downloaded_outputs(job, staged_artifacts)
                 artifacts = import_outputs(job_id, download, self.settings.storage_root)
-                result_manifest = self._validate_downloaded_outputs(job, artifacts)
                 current = self.db.get_job(job_id) or job
                 current_meta = current.get("meta") or {}
                 if result_manifest:
@@ -473,7 +474,7 @@ class KaggleController:
         target_video: str | None = None,
     ) -> str:
         if not self.credentials_ready():
-            raise RuntimeError("Configure d'abord KAGGLE_USERNAME et KAGGLE_KEY.")
+            raise RuntimeError("Configure d'abord KAGGLE_USERNAME et KAGGLE_API_TOKEN (ou KAGGLE_KEY legacy).")
         if task in {"image", "image_edit"} and not (prompt or "").strip():
             raise ValueError("Le prompt est vide.")
         if task == "image_edit" and not source_image:
@@ -767,8 +768,9 @@ class KaggleController:
                     timeout=900,
                 )
 
+                staged_artifacts = scan_outputs(download)
+                result_manifest = self._validate_downloaded_outputs(job, staged_artifacts)
                 artifacts = import_outputs(job_id, download, self.settings.storage_root)
-                result_manifest = self._validate_downloaded_outputs(job, artifacts)
                 current = self.db.get_job(job_id) or job
                 current_meta = current.get("meta") or {}
                 if result_manifest:
@@ -789,16 +791,7 @@ class KaggleController:
             else:
                 self.db.update_job(job_id, status="error", error=f"{type(exc).__name__}: {exc}")
         finally:
-            if kernel_ref and self.settings.delete_remote_kernel:
-                try:
-                    self._run(["kernels", "delete", kernel_ref, "-y"], timeout=180)
-                except Exception:
-                    pass
-            if dataset_ref and self.settings.delete_remote_kernel:
-                try:
-                    self._run(["datasets", "delete", dataset_ref, "-y"], timeout=180)
-                except Exception:
-                    pass
+            self._cleanup_remote_refs(kernel_ref, dataset_ref)
             with self._lock:
                 self._cancelled.discard(job_id)
 
