@@ -1,3 +1,4 @@
+import base64
 from pathlib import Path
 import tempfile
 
@@ -691,7 +692,6 @@ print("Simulated end-to-end Kaggle controller flow passed.")
 
 
 # Real image integrity check with a minimal valid PNG.
-import base64
 with tempfile.TemporaryDirectory() as td:
     tmp = Path(td)
     settings = Settings(
