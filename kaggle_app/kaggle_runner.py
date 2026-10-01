@@ -191,9 +191,17 @@ class KaggleController:
             raise RuntimeError("Le CLI Kaggle n'a pas été trouvé après installation.")
         return exe
 
-    def _run(self, args: list[str], timeout: int | None = None) -> str:
+    def _run(
+        self,
+        args: list[str],
+        timeout: int | None = None,
+        retries: int | None = None,
+    ) -> str:
         exe = self.ensure_cli()
-        attempts = max(1, int(self.settings.cli_retries))
+        attempts = max(
+            1,
+            int(self.settings.cli_retries if retries is None else retries),
+        )
         last_output = ""
         for attempt in range(1, attempts + 1):
             try:
@@ -447,7 +455,19 @@ class KaggleController:
             "licenses": [{"name": "other"}],
         }
         (folder / "dataset-metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-        self._run(["datasets", "create", "-p", str(folder), "-q", "-t", "-r", "skip"], timeout=1800)
+        try:
+            self._run(
+                ["datasets", "create", "-p", str(folder), "-q", "-t", "-r", "skip"],
+                timeout=1800,
+                retries=1,
+            )
+        except Exception as create_exc:
+            # A timeout can happen after Kaggle accepted the create request.
+            # If the expected dataset is visible, continue instead of creating it twice.
+            try:
+                self._run(["datasets", "status", dataset_ref], timeout=120, retries=2)
+            except Exception:
+                raise create_exc
 
         # Dataset creation is asynchronous; wait until it is visible/ready.
         deadline = time.time() + 900
@@ -570,15 +590,24 @@ class KaggleController:
                     meta_json={**job.get("meta", {}), "dataset_ref": dataset_ref},
                 )
                 self._check_cancelled(job_id)
-                self._run(
-                    [
-                        "kernels", "push",
-                        "-p", str(kernel_dir),
-                        "--accelerator", self.settings.accelerator,
-                        "-t", str(self.settings.kernel_timeout),
-                    ],
-                    timeout=600,
-                )
+                try:
+                    self._run(
+                        [
+                            "kernels", "push",
+                            "-p", str(kernel_dir),
+                            "--accelerator", self.settings.accelerator,
+                            "-t", str(self.settings.kernel_timeout),
+                        ],
+                        timeout=600,
+                        retries=1,
+                    )
+                except Exception as push_exc:
+                    # Same protection as dataset creation: after a network timeout,
+                    # accept the operation if the exact kernel ref is already visible.
+                    try:
+                        self._kernel_status(kernel_ref)
+                    except Exception:
+                        raise push_exc
                 self.db.update_job(job_id, status="queued")
 
                 started = time.time()
