@@ -963,3 +963,72 @@ with tempfile.TemporaryDirectory() as td:
     controller.executor.shutdown(wait=False)
 
 print("Single-kernel batch notebook validation passed.")
+
+
+# Source-free image execution must never create/upload a Kaggle dataset.
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root,
+        storage_root=tmp / "media",
+        db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local",
+        worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1,
+        cli_retries=1,
+        kernel_timeout=60,
+        accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False,
+        keep_job_inputs=False,
+        keep_source_inputs_for_retry=True,
+        share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    controller.db.create_job(
+        "no-dataset-execute",
+        "image",
+        "plain prompt",
+        {
+            "negative_prompt": "",
+            "steps": 10,
+            "cfg": 1.0,
+            "seed": 1,
+            "aspect": "1:1",
+            "source_image": "",
+            "target_video": "",
+        },
+    )
+
+    def dataset_must_not_run(*args, **kwargs):
+        raise AssertionError("_prepare_dataset was called for a source-free image job")
+
+    controller._prepare_dataset = dataset_must_not_run
+    controller._kernel_status = lambda ref: ("complete", "complete")
+
+    def fake_run(args, timeout=None, retries=None):
+        if args[:2] == ["kernels", "output"]:
+            out_dir = Path(args[args.index("-p") + 1])
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / "result.json").write_text(
+                json.dumps({
+                    "status": "done",
+                    "task": "image",
+                    "worker_version": "ci",
+                    "seed": 1,
+                    "files": ["image.png"],
+                }),
+                encoding="utf-8",
+            )
+            (out_dir / "image.png").write_bytes(base64.b64decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
+            ))
+        return "ok"
+
+    controller._run = fake_run
+    controller._execute("no-dataset-execute")
+    finished = controller.db.get_job("no-dataset-execute")
+    assert finished["status"] == "done", finished
+    assert (finished["meta"].get("dataset_ref") or "") == ""
+    controller.executor.shutdown(wait=False)
+
+print("Source-free execute skips dataset validation passed.")
