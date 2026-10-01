@@ -201,3 +201,49 @@ with tempfile.TemporaryDirectory() as td:
         KaggleController._recover_remote_job = original_recover
 
 print("Controller restart recovery validation passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root,
+        storage_root=tmp / "media",
+        db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local",
+        worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1,
+        kernel_timeout=60,
+        accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False,
+        keep_job_inputs=False,
+        share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    controller.db.create_job("retry-old", "image", "hello", {"steps": 12, "cfg": 1.0, "seed": 2, "aspect": "1:1"})
+    controller.db.update_job("retry-old", status="error", error="boom")
+
+    # Replace submit so retry can be tested without Kaggle credentials/threads.
+    submitted = {}
+    def fake_submit(task, prompt, negative_prompt="", steps=25, cfg=1.0, seed=-1, aspect="1:1", source_image=None, target_video=None):
+        submitted.update({
+            "task": task, "prompt": prompt, "steps": steps,
+            "cfg": cfg, "seed": seed, "aspect": aspect,
+        })
+        return "retry-new"
+    controller.submit = fake_submit
+    assert controller.retry("retry-old") == "retry-new"
+    assert submitted["task"] == "image"
+    assert submitted["prompt"] == "hello"
+    assert submitted["steps"] == 12
+
+    media_dir = settings.storage_root / "delete-me"
+    media_dir.mkdir(parents=True)
+    (media_dir / "x.png").write_bytes(b"x")
+    controller.db.create_job("delete-me", "image", "x", {})
+    controller.db.update_job("delete-me", status="done")
+    assert "supprimé" in controller.delete_local_job("delete-me")
+    assert controller.db.get_job("delete-me") is None
+    assert not media_dir.exists()
+    controller.executor.shutdown(wait=False)
+
+print("Retry and delete validation passed.")
