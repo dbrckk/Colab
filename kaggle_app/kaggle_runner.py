@@ -92,7 +92,7 @@ class KaggleController:
             except Exception:
                 pass
         # Force a real authenticated call now, not only at job submission.
-        self._run(["kernels", "list", "-m", "--page-size", "1"], timeout=120)
+        self._run(["kernels", "list", "-m", "-p", "1"], timeout=120)
         return "Identifiants Kaggle validés" + (" et sauvegardés dans .env.local." if persist else ".")
 
     def submit(
@@ -156,7 +156,7 @@ class KaggleController:
         metadata = {
             "title": f"Qwen input {job['id']}"[:50],
             "id": dataset_ref,
-            "licenses": [{"name": "CC0-1.0"}],
+            "licenses": [{"name": "other"}],
         }
         (folder / "dataset-metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
         self._run(["datasets", "create", "-p", str(folder), "-q", "-t", "-r", "skip"], timeout=1800)
