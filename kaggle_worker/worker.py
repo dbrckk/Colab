@@ -205,13 +205,7 @@ def load_qwen_models(include_vision: bool = False) -> dict[str, Path]:
     with ThreadPoolExecutor(max_workers=min(4, len(specs))) as pool:
         return dict(pool.map(fetch, specs.items()))
 
-def run_image():
-    sdcli = ensure_sdcli()
-    models = load_qwen_models(include_vision=False)
-    heretic = models["heretic"]
-    dit = models["dit"]
-    vae = models["vae"]
-
+def _image_dimensions():
     aspects = {
         "1:1": (1024, 1024),
         "4:3": (1152, 896),
@@ -219,18 +213,15 @@ def run_image():
         "16:9": (1344, 768),
         "9:16": (768, 1344),
     }
-    width, height = aspects.get(CONFIG.get("aspect", "1:1"), (1024, 1024))
-    seed = int(CONFIG.get("seed", -1))
-    if seed < 0:
-        seed = random.randint(1, 2_000_000_000)
+    return aspects.get(CONFIG.get("aspect", "1:1"), (1024, 1024))
 
-    out = OUT / "image.png"
+def _run_sd_image(sdcli, heretic, dit, vae, prompt, out, seed, width, height):
     cmd = [
         str(sdcli),
         "--diffusion-model", str(dit),
         "--vae", str(vae),
         "--llm", str(heretic),
-        "-p", CONFIG.get("prompt", ""),
+        "-p", prompt,
         "--negative-prompt", CONFIG.get("negative_prompt", ""),
         "--cfg-scale", str(float(CONFIG.get("cfg", 1.0))),
         "--sampling-method", "euler",
@@ -248,6 +239,22 @@ def run_image():
     p = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=10800)
     if p.returncode != 0 or not out.exists():
         raise RuntimeError(((p.stdout or "") + "\n" + (p.stderr or ""))[-7000:])
+
+def run_image():
+    sdcli = ensure_sdcli()
+    models = load_qwen_models(include_vision=False)
+    heretic = models["heretic"]
+    dit = models["dit"]
+    vae = models["vae"]
+    width, height = _image_dimensions()
+    seed = int(CONFIG.get("seed", -1))
+    if seed < 0:
+        seed = random.randint(1, 2_000_000_000)
+    out = OUT / "image.png"
+    _run_sd_image(
+        sdcli, heretic, dit, vae,
+        CONFIG.get("prompt", ""), out, seed, width, height,
+    )
     write_result(
         "done",
         seed=seed,
@@ -257,6 +264,41 @@ def run_image():
         cfg=float(CONFIG.get("cfg", 1.0)),
         files=[out.name],
     )
+
+def run_image_batch():
+    prompts = [str(x).strip() for x in (CONFIG.get("prompts") or []) if str(x).strip()]
+    if not prompts:
+        raise ValueError("image_batch ne contient aucun prompt.")
+
+    sdcli = ensure_sdcli()
+    models = load_qwen_models(include_vision=False)
+    heretic = models["heretic"]
+    dit = models["dit"]
+    vae = models["vae"]
+    width, height = _image_dimensions()
+
+    base_seed = int(CONFIG.get("seed", -1))
+    files = []
+    seeds = []
+    for index, prompt in enumerate(prompts, 1):
+        seed = base_seed + (index - 1) if base_seed >= 0 else random.randint(1, 2_000_000_000)
+        out = OUT / f"image_{index:03d}.png"
+        print(f"[batch] {index}/{len(prompts)} seed={seed}", flush=True)
+        _run_sd_image(sdcli, heretic, dit, vae, prompt, out, seed, width, height)
+        files.append(out.name)
+        seeds.append(seed)
+
+    write_result(
+        "done",
+        batch_count=len(prompts),
+        seeds=seeds,
+        width=width,
+        height=height,
+        steps=int(CONFIG.get("steps", 25)),
+        cfg=float(CONFIG.get("cfg", 1.0)),
+        files=files,
+    )
+
 
 def run_image_edit():
     sdcli = ensure_sdcli()
@@ -382,6 +424,8 @@ def main():
     try:
         if task == "image":
             run_image()
+        elif task == "image_batch":
+            run_image_batch()
         elif task == "image_edit":
             run_image_edit()
         elif task == "video_faceswap":
