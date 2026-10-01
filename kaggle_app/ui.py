@@ -53,6 +53,12 @@ def _submit(task, prompt, negative, steps, cfg, seed, aspect, source, target):
     except Exception as e:
         raise gr.Error(str(e))
 
+def _cancel_job(job_id):
+    try:
+        return controller.cancel(job_id), _jobs_table()
+    except Exception as e:
+        raise gr.Error(str(e))
+
 def _refresh(job_id):
     if not job_id:
         return "Aucun job sélectionné.", [], None, [], _jobs_table()
@@ -102,7 +108,9 @@ def build_ui():
 
                 with gr.Column(scale=6):
                     status = gr.Textbox(label="État", lines=5, interactive=False)
-                    refresh = gr.Button("↻ Actualiser")
+                    with gr.Row():
+                        refresh = gr.Button("↻ Actualiser")
+                        cancel = gr.Button("⛔ Annuler le job", variant="stop")
                     gallery = gr.Gallery(label="Images récupérées", columns=2, height=420)
                     video = gr.Video(label="Vidéo récupérée")
                     files = gr.Files(label="Tous les fichiers du job")
@@ -144,6 +152,7 @@ def build_ui():
             [job_id, submit_info, jobs],
         )
         refresh.click(_refresh, [job_id], [status, gallery, video, files, jobs])
+        cancel.click(_cancel_job, [job_id], [submit_info, jobs])
         reload_jobs.click(_jobs_table, [], [jobs])
         open_job.click(_refresh, [lookup], [lib_status, lib_gallery, lib_video, lib_files, jobs])
         save.click(
