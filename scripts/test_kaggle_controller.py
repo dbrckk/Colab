@@ -271,6 +271,10 @@ compile(worker_source, str(worker_path), "exec")
 for token in [
     "def run_image()",
     "def run_image_batch()",
+    "batch_backend=batch_backend",
+    "/sdapi/v1/txt2img",
+    "def _server_txt2img(",
+    "def ensure_sdserver(",
     "def run_image_edit()",
     "def run_video_faceswap()",
     "def load_qwen_models(",
@@ -1086,3 +1090,13 @@ with tempfile.TemporaryDirectory() as td:
     controller.executor.shutdown(wait=False)
 
 print("Content-addressed input deduplication validation passed.")
+
+
+# Batch jobs should prefer a persistent sd-server model context and retain CLI fallback.
+assert "ensure_sdserver(sdcli)" in worker_source
+assert '"/sdapi/v1/txt2img"' in worker_source
+assert '"--conditioning-cache-size", "4"' in worker_source
+assert 'batch_backend = "sd-server"' in worker_source
+assert 'batch_backend = "sd-cli"' in worker_source
+assert "server_process.terminate()" in worker_source
+print("Batch server API wiring validation passed.")
