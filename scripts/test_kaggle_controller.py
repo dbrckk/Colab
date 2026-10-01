@@ -89,7 +89,10 @@ with tempfile.TemporaryDirectory() as td:
     assert notebook["nbformat"] == 4
     worker_code = "".join(notebook["cells"][1]["source"])
     assert "def run_image()" in worker_code
+    assert "def run_image_edit()" in worker_code
     assert "def run_video_faceswap()" in worker_code
+    assert "--llm_vision" in worker_code
+    assert "--negative-prompt" in worker_code
     controller.executor.shutdown(wait=False)
 
 print("Generated Kaggle notebook validation passed.")
