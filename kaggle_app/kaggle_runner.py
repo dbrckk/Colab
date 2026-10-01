@@ -434,7 +434,7 @@ class KaggleController:
         if kernel_ref or dataset_ref:
             threading.Thread(
                 target=self._cleanup_remote_refs,
-                args=(kernel_ref, dataset_ref),
+                args=(kernel_ref, dataset_ref, True),
                 daemon=True,
                 name=f"kaggle-cancel-{job_id}",
             ).start()
@@ -608,8 +608,13 @@ class KaggleController:
         dataset_slug = slugify(f"qwen-input-{job['id']}")
         return f"{username}/{dataset_slug}"
 
-    def _cleanup_remote_refs(self, kernel_ref: str = "", dataset_ref: str = "") -> None:
-        if not self.settings.delete_remote_kernel:
+    def _cleanup_remote_refs(
+        self,
+        kernel_ref: str = "",
+        dataset_ref: str = "",
+        force: bool = False,
+    ) -> None:
+        if not force and not self.settings.delete_remote_kernel:
             return
         if kernel_ref:
             try:
