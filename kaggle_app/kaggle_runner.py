@@ -78,6 +78,39 @@ class KaggleController:
                 with self._lock:
                     self._futures[job_id] = self.executor.submit(self._recover_remote_job, job_id)
 
+    def _media_integrity_ok(self, path: Path, kind: str) -> bool:
+        try:
+            if not path.exists() or path.stat().st_size <= 0:
+                return False
+            if kind == "image":
+                try:
+                    from PIL import Image
+                    with Image.open(path) as img:
+                        img.verify()
+                    return True
+                except Exception:
+                    return False
+            if kind == "video":
+                ffprobe = shutil.which("ffprobe")
+                if not ffprobe:
+                    return path.stat().st_size > 1024
+                p = subprocess.run(
+                    [
+                        ffprobe, "-v", "error",
+                        "-select_streams", "v:0",
+                        "-show_entries", "stream=codec_type",
+                        "-of", "default=nokey=1:noprint_wrappers=1",
+                        str(path),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                return p.returncode == 0 and "video" in (p.stdout or "").lower()
+            return True
+        except Exception:
+            return False
+
     def _validate_downloaded_outputs(
         self,
         job: dict[str, Any],
@@ -105,14 +138,23 @@ class KaggleController:
                     + str(data.get("error") or data.get("status") or "statut inconnu")
                 )
 
+        artifact_names = {path.name for path, _ in artifacts}
+        declared_files = [str(x) for x in (data.get("files") or [])]
+        missing_declared = [name for name in declared_files if Path(name).name not in artifact_names]
+        if missing_declared:
+            raise RuntimeError(
+                "Le manifeste Kaggle référence des fichiers absents: "
+                + ", ".join(missing_declared[:10])
+            )
+
         if expected_kind:
             media = [
                 path for path, kind in artifacts
-                if kind == expected_kind and path.exists() and path.stat().st_size > 0
+                if kind == expected_kind and self._media_integrity_ok(path, kind)
             ]
             if not media:
                 raise RuntimeError(
-                    f"Le job {job.get('task')} est terminé sans média {expected_kind} valide."
+                    f"Le job {job.get('task')} est terminé sans média {expected_kind} décodable."
                 )
         return data
 
