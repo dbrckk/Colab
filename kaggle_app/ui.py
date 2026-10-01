@@ -51,6 +51,14 @@ def _dashboard():
     except Exception as e:
         return f"Diagnostic tableau de bord indisponible: {type(e).__name__}: {e}"
 
+def _recent_videos(limit=30):
+    items = []
+    for a in controller.recent_artifacts("video", int(limit)):
+        path = a.get("path")
+        if path and Path(path).exists():
+            items.append(path)
+    return items
+
 def _recent_images(limit=60):
     items = []
     for a in controller.recent_artifacts("image", int(limit)):
@@ -318,6 +326,14 @@ def build_ui():
                     columns=4,
                     height=520,
                 )
+            with gr.Accordion("🎬 Vidéos récentes", open=False):
+                with gr.Row():
+                    recent_video_limit = gr.Slider(5, 50, value=20, step=5, label="Vidéos récentes")
+                    recent_video_reload = gr.Button("↻ Actualiser les vidéos")
+                recent_videos = gr.Files(
+                    label="Vidéos générées récemment",
+                    value=_recent_videos(20),
+                )
             with gr.Row():
                 job_status_filter = gr.Dropdown(
                     ["Tous","queued","waiting_auth","preparing","uploading_inputs","submitting","running","recovering","downloading","done","error","cancelled","interrupted"],
@@ -397,6 +413,7 @@ def build_ui():
             [jobs],
         )
         recent_reload.click(_recent_images, [recent_limit], [recent_gallery])
+        recent_video_reload.click(_recent_videos, [recent_video_limit], [recent_videos])
         open_job.click(_refresh, [lookup], [lib_status, lib_gallery, lib_video, lib_files, jobs])
         load_form_btn.click(
             _load_job_to_form,
