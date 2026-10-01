@@ -643,6 +643,43 @@ class KaggleController:
             with self._lock:
                 self._cancelled.discard(job_id)
 
+    def dashboard_summary(self) -> str:
+        jobs = self.db.list_jobs(1000)
+        active_states = {
+            "preparing", "uploading_inputs", "submitting",
+            "queued", "running", "recovering", "downloading",
+            "cancel_requested",
+        }
+        active = sum(1 for j in jobs if j.get("status") in active_states)
+        done = sum(1 for j in jobs if j.get("status") == "done")
+        failed = sum(1 for j in jobs if j.get("status") in {"error", "interrupted"})
+        cancelled = sum(1 for j in jobs if j.get("status") == "cancelled")
+
+        total_bytes = 0
+        try:
+            if self.settings.storage_root.exists():
+                for p in self.settings.storage_root.rglob("*"):
+                    if p.is_file():
+                        try:
+                            total_bytes += p.stat().st_size
+                        except OSError:
+                            pass
+        except Exception:
+            pass
+
+        if total_bytes >= 1024**3:
+            storage = f"{total_bytes / 1024**3:.2f} Go"
+        else:
+            storage = f"{total_bytes / 1024**2:.1f} Mo"
+
+        auth = "Kaggle prêt" if self.credentials_ready() else "Kaggle à configurer"
+        return (
+            f"**{auth}**  •  "
+            f"Actifs **{active}**  •  Terminés **{done}**  •  "
+            f"Erreurs **{failed}**  •  Annulés **{cancelled}**  •  "
+            f"Stockage **{storage}**"
+        )
+
     def health_check(self) -> str:
         lines = []
         try:
