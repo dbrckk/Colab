@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import importlib.util
+from importlib.metadata import PackageNotFoundError, version
 import subprocess
 import sys
 import secrets
@@ -20,15 +21,26 @@ def load_local_env() -> None:
 
 load_local_env()
 
+def _version_tuple(package: str) -> tuple[int, int, int]:
+    try:
+        raw = version(package)
+        nums = [int(x) for x in __import__("re").findall(r"\d+", raw)[:3]]
+        return tuple((nums + [0, 0, 0])[:3])
+    except (PackageNotFoundError, ValueError):
+        return (0, 0, 0)
+
 def ensure_dependencies() -> None:
     missing = []
-    if importlib.util.find_spec("gradio") is None:
-        missing.append("gradio>=5.0")
-    if shutil.which("kaggle") is None and importlib.util.find_spec("kaggle") is None:
-        missing.append("kaggle>=1.7")
+    if _version_tuple("gradio") < (6, 0, 0):
+        missing.append("gradio>=6.0")
+    if _version_tuple("kaggle") < (2, 2, 3) or shutil.which("kaggle") is None:
+        missing.append("kaggle>=2.2.3")
     if missing:
         subprocess.run(
-            [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", *missing],
+            [
+                sys.executable, "-m", "pip", "install",
+                "--disable-pip-version-check", "--upgrade", *missing
+            ],
             check=True,
         )
 
