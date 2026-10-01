@@ -103,3 +103,20 @@ class JobDB:
             con.execute("DELETE FROM artifacts WHERE job_id=?", (job_id,))
             con.execute("DELETE FROM jobs WHERE id=?", (job_id,))
             con.commit()
+
+
+    def recent_artifacts(self, kind: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        sql = """
+        SELECT artifacts.*, jobs.prompt, jobs.task, jobs.status
+        FROM artifacts
+        JOIN jobs ON jobs.id = artifacts.job_id
+        """
+        params: list[Any] = []
+        if kind:
+            sql += " WHERE artifacts.kind=?"
+            params.append(kind)
+        sql += " ORDER BY artifacts.created_at DESC, artifacts.id DESC LIMIT ?"
+        params.append(int(limit))
+        with _LOCK, self._conn() as con:
+            rows = con.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
