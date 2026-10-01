@@ -36,12 +36,17 @@ class KaggleController:
         self._lock = threading.RLock()
 
     def credentials_ready(self) -> bool:
-        return bool(self.settings.kaggle_username and self.settings.kaggle_key)
+        return bool(
+            self.settings.kaggle_username
+            and (self.settings.kaggle_api_token or self.settings.kaggle_key)
+        )
 
     def _env(self) -> dict[str, str]:
         env = os.environ.copy()
         if self.settings.kaggle_username:
             env["KAGGLE_USERNAME"] = self.settings.kaggle_username
+        if self.settings.kaggle_api_token:
+            env["KAGGLE_API_TOKEN"] = self.settings.kaggle_api_token
         if self.settings.kaggle_key:
             env["KAGGLE_KEY"] = self.settings.kaggle_key
         return env
@@ -74,26 +79,48 @@ class KaggleController:
             raise RuntimeError(output[-7000:] or f"Kaggle CLI exit={p.returncode}")
         return output
 
-    def save_credentials(self, username: str, key: str, persist: bool = True) -> str:
+    def save_credentials(
+        self,
+        username: str,
+        api_token: str = "",
+        legacy_key: str = "",
+        persist: bool = True,
+    ) -> str:
         username = (username or "").strip()
-        key = (key or "").strip()
-        if not username or not key:
-            raise ValueError("KAGGLE_USERNAME et KAGGLE_KEY sont requis.")
+        api_token = (api_token or "").strip()
+        legacy_key = (legacy_key or "").strip()
+        if not username:
+            raise ValueError("KAGGLE_USERNAME est requis pour créer les kernels/datasets.")
+        if not api_token and not legacy_key:
+            raise ValueError("Ajoute KAGGLE_API_TOKEN (recommandé) ou l'ancien KAGGLE_KEY.")
+
         os.environ["KAGGLE_USERNAME"] = username
-        os.environ["KAGGLE_KEY"] = key
+        if api_token:
+            os.environ["KAGGLE_API_TOKEN"] = api_token
+            os.environ.pop("KAGGLE_KEY", None)
+        else:
+            os.environ["KAGGLE_KEY"] = legacy_key
+            os.environ.pop("KAGGLE_API_TOKEN", None)
+
         if persist:
             env_path = self.settings.env_file
-            env_path.write_text(
-                f"KAGGLE_USERNAME={username}\nKAGGLE_KEY={key}\n",
-                encoding="utf-8",
-            )
+            lines = [f"KAGGLE_USERNAME={username}"]
+            if api_token:
+                lines.append(f"KAGGLE_API_TOKEN={api_token}")
+            else:
+                lines.append(f"KAGGLE_KEY={legacy_key}")
+            env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
             try:
                 os.chmod(env_path, 0o600)
             except Exception:
                 pass
-        # Force a real authenticated call now, not only at job submission.
+
         self._run(["kernels", "list", "-m", "-p", "1"], timeout=120)
-        return "Identifiants Kaggle validés" + (" et sauvegardés dans .env.local." if persist else ".")
+        mode = "API token" if api_token else "legacy key"
+        return (
+            f"Identifiants Kaggle validés ({mode})"
+            + (" et sauvegardés dans le stockage privé configuré." if persist else ".")
+        )
 
     def submit(
         self,
