@@ -139,7 +139,8 @@ def _save_credentials(username, api_token, legacy_key, persist):
 def _submit_batch(prompts, negative, steps, cfg, seed, aspect):
     try:
         ids = controller.submit_batch(prompts, negative, steps, cfg, seed, aspect)
-        return "\n".join(ids), f"{len(ids)} job(s) ajoutés à la file Kaggle.", _jobs_table()
+        count = len([line for line in (prompts or "").splitlines() if line.strip()])
+        return "\n".join(ids), f"Lot de {count} image(s) ajouté comme un seul job Kaggle.", _jobs_table()
     except Exception as e:
         raise gr.Error(str(e))
 
@@ -287,7 +288,7 @@ def build_ui():
                     job_id = gr.Textbox(label="Job ID")
                     submit_info = gr.Textbox(label="Envoi", interactive=False)
                     with gr.Accordion("📦 Génération par lot", open=False):
-                        gr.Markdown("Un prompt par ligne • maximum 20 images • exécution séquentielle sur Kaggle.")
+                        gr.Markdown("Un prompt par ligne • maximum 20 images • un seul job Kaggle avec chargement Qwen partagé.")
                         batch_prompts = gr.Textbox(
                             label="Prompts du lot",
                             lines=8,
@@ -324,7 +325,7 @@ def build_ui():
                     label="Statut",
                 )
                 job_task_filter = gr.Dropdown(
-                    ["Tous","image","image_edit","video_faceswap"],
+                    ["Tous","image","image_batch","image_edit","video_faceswap"],
                     value="Tous",
                     label="Type",
                 )
