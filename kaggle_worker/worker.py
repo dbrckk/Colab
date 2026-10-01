@@ -17,9 +17,12 @@ OUT = WORK / "outputs"
 OUT.mkdir(parents=True, exist_ok=True)
 
 def find_input_root() -> Path:
+    inline = WORK / "job_config.json"
+    if inline.exists():
+        return WORK
     roots = list(Path("/kaggle/input").glob("*/job_config.json"))
     if not roots:
-        raise FileNotFoundError("job_config.json introuvable dans /kaggle/input.")
+        raise FileNotFoundError("job_config.json introuvable dans /kaggle/working ou /kaggle/input.")
     return roots[0].parent
 
 INPUT = find_input_root()
