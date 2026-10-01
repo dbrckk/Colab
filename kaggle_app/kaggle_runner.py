@@ -855,9 +855,13 @@ class KaggleController:
             lines.append(f"❌ Stockage: {type(exc).__name__}: {exc}")
 
         try:
-            with self.db._conn() as con:
-                con.execute("SELECT 1").fetchone()
-            lines.append(f"✅ SQLite accessible — {self.settings.db_path}")
+            integrity = self.db.integrity_status()
+            if integrity.lower().startswith("ok"):
+                lines.append(f"✅ SQLite intègre — {self.settings.db_path}")
+                if self.db.recovered_corrupt_path:
+                    lines.append(f"ℹ️ Ancienne base corrompue sauvegardée — {self.db.recovered_corrupt_path}")
+            else:
+                lines.append(f"❌ SQLite integrity_check: {integrity}")
         except Exception as exc:
             lines.append(f"❌ SQLite: {type(exc).__name__}: {exc}")
 
