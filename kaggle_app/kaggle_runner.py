@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 import uuid
+from importlib.metadata import PackageNotFoundError, version
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -53,10 +54,22 @@ class KaggleController:
 
     def ensure_cli(self) -> str:
         exe = shutil.which("kaggle")
-        if exe:
+        current = (0, 0, 0)
+        try:
+            raw = version("kaggle")
+            nums = [int(x) for x in re.findall(r"\d+", raw)[:3]]
+            current = tuple((nums + [0, 0, 0])[:3])
+        except (PackageNotFoundError, ValueError):
+            pass
+        if exe and current >= (2, 2, 3):
             return exe
+
         subprocess.run(
-            [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "--quiet", "kaggle"],
+            [
+                sys.executable, "-m", "pip", "install",
+                "--disable-pip-version-check", "--quiet", "--upgrade",
+                "kaggle>=2.2.3",
+            ],
             check=True,
             timeout=300,
         )
