@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import shutil
@@ -437,20 +438,89 @@ class KaggleController:
         if self.is_cancelled(job_id):
             raise JobCancelled("Job annulé par l’utilisateur.")
 
+    def _hash_file(self, path: Path) -> str:
+        h = hashlib.sha256()
+        with path.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(4 * 1024 * 1024), b""):
+                h.update(chunk)
+        return h.hexdigest()
+
+    def _input_store_root(self) -> Path:
+        root = self.settings.storage_root / "_input_store"
+        root.mkdir(parents=True, exist_ok=True)
+        return root
+
     def _persist_input(self, job_id: str, source: str | None, stem: str) -> str:
         if not source:
             return ""
         src = Path(source)
         if not src.exists() or not src.is_file():
             raise FileNotFoundError(f"Fichier uploadé introuvable: {src}")
-        dest_dir = self.settings.storage_root / "_inputs" / job_id
-        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        store = self._input_store_root()
+        try:
+            if src.parent.resolve() == store.resolve():
+                return str(src)
+        except Exception:
+            pass
+
+        digest = self._hash_file(src)
         suffix = src.suffix.lower()
-        dest = dest_dir / f"{stem}{suffix}"
-        shutil.copy2(src, dest)
+        dest = store / f"{digest}{suffix}"
+        if not dest.exists() or dest.stat().st_size != src.stat().st_size:
+            tmp = store / f".{digest}.{uuid.uuid4().hex[:8]}.part"
+            try:
+                shutil.copy2(src, tmp)
+                if self._hash_file(tmp) != digest:
+                    raise RuntimeError("Checksum invalide après copie de l'upload.")
+                os.replace(tmp, dest)
+            finally:
+                try:
+                    if tmp.exists():
+                        tmp.unlink()
+                except OSError:
+                    pass
         return str(dest)
 
+    def _referenced_input_paths(self) -> set[str]:
+        refs: set[str] = set()
+        for row in self.db.list_jobs(100000):
+            meta = row.get("meta") or {}
+            for key in ("source_image", "target_video"):
+                value = meta.get(key)
+                if value:
+                    try:
+                        refs.add(str(Path(value).resolve()))
+                    except Exception:
+                        refs.add(str(Path(value)))
+        return refs
+
+    def _gc_input_store(self) -> tuple[int, int]:
+        store = self.settings.storage_root / "_input_store"
+        if not store.exists():
+            return 0, 0
+        refs = self._referenced_input_paths()
+        removed = 0
+        reclaimed = 0
+        for p in store.iterdir():
+            if not p.is_file() or p.name.startswith("."):
+                continue
+            try:
+                resolved = str(p.resolve())
+            except Exception:
+                resolved = str(p)
+            if resolved in refs:
+                continue
+            try:
+                reclaimed += p.stat().st_size
+                p.unlink()
+                removed += 1
+            except OSError:
+                pass
+        return removed, reclaimed
+
     def _cleanup_inputs(self, job_id: str, force: bool = False) -> None:
+        # Legacy per-job input directories are still removed for old installations.
         if not force:
             if self.settings.keep_job_inputs:
                 return
@@ -871,6 +941,9 @@ class KaggleController:
                 shutil.rmtree(d, ignore_errors=True)
                 removed_inputs += 1
 
+        gc_files, gc_bytes = self._gc_input_store()
+        reclaimed += gc_bytes
+
         try:
             self.db.vacuum()
         except Exception:
@@ -884,7 +957,8 @@ class KaggleController:
         self._storage_cache["ts"] = 0.0
         return (
             f"Nettoyage terminé • {removed_exports} export(s) ancien(s) • "
-            f"{removed_inputs} dossier(s) d'entrée orphelin(s) • {amount} libéré(s)."
+            f"{removed_inputs} dossier(s) d'entrée orphelin(s) • "
+            f"{gc_files} source(s) partagée(s) non référencée(s) • {amount} libéré(s)."
         )
 
     def dashboard_summary(self) -> str:
@@ -1083,6 +1157,7 @@ class KaggleController:
         except OSError:
             pass
         self.db.delete_job(job_id)
+        self._gc_input_store()
         self._storage_cache["ts"] = 0.0
         return f"Job {job_id} supprimé du stockage local."
 
