@@ -499,6 +499,18 @@ class KaggleController:
             self._futures[job_id] = self.executor.submit(self._execute, job_id)
         return job_id
 
+    def _job_config(self, job: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "job_id": job["id"],
+            "task": job["task"],
+            "prompt": job.get("prompt", ""),
+            **(job.get("meta") or {}),
+        }
+
+    def _needs_dataset(self, job: dict[str, Any]) -> bool:
+        meta = job.get("meta") or {}
+        return bool(meta.get("source_image") or meta.get("target_video"))
+
     def _dataset_ref(self, job: dict[str, Any]) -> str:
         username = self.settings.kaggle_username
         dataset_slug = slugify(f"qwen-input-{job['id']}")
@@ -553,12 +565,7 @@ class KaggleController:
 
     def _prepare_dataset(self, job: dict[str, Any], folder: Path, dataset_ref: str | None = None) -> str:
         dataset_ref = dataset_ref or self._dataset_ref(job)
-        config = {
-            "job_id": job["id"],
-            "task": job["task"],
-            "prompt": job.get("prompt", ""),
-            **job.get("meta", {}),
-        }
+        config = self._job_config(job)
         for key in ("source_image", "target_video"):
             src = config.get(key)
             if src:
@@ -617,24 +624,40 @@ class KaggleController:
         kernel_ref = f"{username}/{slug}"
 
         worker_source = self.settings.worker_path.read_text(encoding="utf-8")
+        cells = [
+            {
+                "cell_type": "markdown",
+                "metadata": {},
+                "source": [
+                    "# Qwen Kaggle Worker\n",
+                    "Notebook généré automatiquement par Qwen Kaggle Studio.\n",
+                ],
+            }
+        ]
+        if not dataset_ref:
+            inline_config = json.dumps(self._job_config(job), ensure_ascii=False)
+            bootstrap = (
+                "import json\n"
+                "from pathlib import Path\n"
+                f"_config = {inline_config!r}\n"
+                "Path('/kaggle/working/job_config.json').write_text(_config, encoding='utf-8')\n"
+            )
+            cells.append({
+                "cell_type": "code",
+                "execution_count": None,
+                "metadata": {},
+                "outputs": [],
+                "source": bootstrap.splitlines(keepends=True),
+            })
+        cells.append({
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": worker_source.splitlines(keepends=True),
+        })
         notebook = {
-            "cells": [
-                {
-                    "cell_type": "markdown",
-                    "metadata": {},
-                    "source": [
-                        "# Qwen Kaggle Worker\n",
-                        "Notebook généré automatiquement par Qwen Kaggle Studio.\n",
-                    ],
-                },
-                {
-                    "cell_type": "code",
-                    "execution_count": None,
-                    "metadata": {},
-                    "outputs": [],
-                    "source": worker_source.splitlines(keepends=True),
-                },
-            ],
+            "cells": cells,
             "metadata": {
                 "kernelspec": {
                     "display_name": "Python 3",
@@ -661,7 +684,7 @@ class KaggleController:
             "enable_gpu": True,
             "enable_internet": True,
             "machine_shape": self.settings.accelerator,
-            "dataset_sources": [dataset_ref],
+            "dataset_sources": [dataset_ref] if dataset_ref else [],
             "competition_sources": [],
             "kernel_sources": [],
             "model_sources": [],
@@ -697,14 +720,22 @@ class KaggleController:
                 kernel_dir.mkdir()
 
                 self._check_cancelled(job_id)
-                dataset_ref = self._dataset_ref(job)
-                self.db.update_job(
-                    job_id,
-                    status="uploading_inputs",
-                    meta_json={**job.get("meta", {}), "dataset_ref": dataset_ref},
-                )
-                dataset_ref = self._prepare_dataset(job, dataset_dir, dataset_ref)
-                self._check_cancelled(job_id)
+                if self._needs_dataset(job):
+                    dataset_ref = self._dataset_ref(job)
+                    self.db.update_job(
+                        job_id,
+                        status="uploading_inputs",
+                        meta_json={**job.get("meta", {}), "dataset_ref": dataset_ref},
+                    )
+                    dataset_ref = self._prepare_dataset(job, dataset_dir, dataset_ref)
+                    self._check_cancelled(job_id)
+                else:
+                    dataset_ref = ""
+                    self.db.update_job(
+                        job_id,
+                        status="preparing",
+                        meta_json={**job.get("meta", {}), "dataset_ref": ""},
+                    )
 
                 kernel_ref = self._prepare_kernel(job, kernel_dir, dataset_ref)
                 self.db.update_job(
