@@ -35,6 +35,18 @@ def _jobs_table():
         ])
     return rows
 
+def _health_check():
+    try:
+        return controller.health_check()
+    except Exception as e:
+        return f"{type(e).__name__}: {e}"
+
+def _remote_logs(job_id):
+    try:
+        return controller.remote_logs(job_id)
+    except Exception as e:
+        return f"{type(e).__name__}: {e}"
+
 def _save_credentials(username, api_token, legacy_key, persist):
     try:
         msg = controller.save_credentials(username, api_token, legacy_key, persist)
@@ -156,8 +168,10 @@ def build_ui():
             with gr.Row():
                 open_job = gr.Button("Ouvrir le job", variant="primary")
                 retry_job_btn = gr.Button("↻ Relancer le job")
+                logs_btn = gr.Button("📜 Logs Kaggle")
                 delete_job_btn = gr.Button("🗑 Supprimer localement", variant="stop")
             lib_status = gr.Textbox(label="État", lines=5, interactive=False)
+            lib_logs = gr.Textbox(label="Logs Kaggle", lines=12, interactive=False, visible=True)
             lib_gallery = gr.Gallery(label="Images", columns=3)
             lib_video = gr.Video(label="Vidéo")
             lib_files = gr.Files(label="Fichiers")
@@ -174,8 +188,11 @@ def build_ui():
             with gr.Accordion("Ancienne clé Kaggle (optionnel)", open=False):
                 legacy_key = gr.Textbox(value="", label="KAGGLE_KEY legacy", type="password")
             persist = gr.Checkbox(value=True, label="Sauvegarder dans le stockage privé configuré")
-            save = gr.Button("Enregistrer et tester Kaggle", variant="primary")
+            with gr.Row():
+                save = gr.Button("Enregistrer et tester Kaggle", variant="primary")
+                health_btn = gr.Button("🩺 Diagnostic complet")
             save_msg = gr.Textbox(label="Résultat", lines=3, interactive=False)
+            health_out = gr.Textbox(label="Diagnostic", lines=8, interactive=False)
 
         submit.click(
             _submit,
@@ -188,12 +205,14 @@ def build_ui():
         reload_jobs.click(_jobs_table, [], [jobs])
         open_job.click(_refresh, [lookup], [lib_status, lib_gallery, lib_video, lib_files, jobs])
         retry_job_btn.click(_retry_job, [lookup], [lookup, lib_status, jobs])
+        logs_btn.click(_remote_logs, [lookup], [lib_logs])
         delete_job_btn.click(_delete_job, [lookup], [lib_status, jobs])
         save.click(
             _save_credentials,
             [username, api_token, legacy_key, persist],
             [save_msg, kaggle_status],
         )
+        health_btn.click(_health_check, [], [health_out])
 
         try:
             timer = gr.Timer(value=5.0, active=True)
