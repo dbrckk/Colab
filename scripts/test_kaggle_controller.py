@@ -260,6 +260,7 @@ worker_source = worker_path.read_text(encoding="utf-8")
 compile(worker_source, str(worker_path), "exec")
 for token in [
     "def run_image()",
+    "def run_image_batch()",
     "def run_image_edit()",
     "def run_video_faceswap()",
     "def load_qwen_models(",
@@ -384,27 +385,30 @@ with tempfile.TemporaryDirectory() as td:
         accelerator="NvidiaTeslaT4",
         delete_remote_kernel=False,
         keep_job_inputs=False,
+        keep_source_inputs_for_retry=True,
         share_gradio=False,
     )
+    os.environ["KAGGLE_USERNAME"] = "ci-user"
+    os.environ["KAGGLE_API_TOKEN"] = "ci-token"
     controller = KaggleController(settings)
-    submitted = []
-    def fake_submit(task, prompt, negative_prompt="", steps=25, cfg=1.0, seed=-1, aspect="1:1", source_image=None, target_video=None):
-        submitted.append((task, prompt, seed))
-        return f"id-{len(submitted)}"
-    controller.submit = fake_submit
-    ids = controller.submit_batch("first\n\nsecond\nthird", seed=100)
-    assert ids == ["id-1", "id-2", "id-3"]
-    assert submitted == [
-        ("image", "first", 100),
-        ("image", "second", 101),
-        ("image", "third", 102),
-    ]
+    original_execute = controller._execute
+    controller._execute = lambda job_id: None
     try:
-        controller.submit_batch("\n".join(f"p{i}" for i in range(21)))
-        raise AssertionError("batch limit was not enforced")
-    except ValueError:
-        pass
-    controller.executor.shutdown(wait=False)
+        ids = controller.submit_batch("first\n\nsecond\nthird", seed=100)
+        assert len(ids) == 1
+        batch_job = controller.db.get_job(ids[0])
+        assert batch_job["task"] == "image_batch"
+        assert batch_job["meta"]["prompts"] == ["first", "second", "third"]
+        assert batch_job["meta"]["batch_count"] == 3
+        assert batch_job["meta"]["seed"] == 100
+        try:
+            controller.submit_batch("\n".join(f"p{i}" for i in range(21)))
+            raise AssertionError("batch limit was not enforced")
+        except ValueError:
+            pass
+    finally:
+        controller._execute = original_execute
+        controller.executor.shutdown(wait=False)
 
 print("Batch submission validation passed.")
 
@@ -912,3 +916,50 @@ with tempfile.TemporaryDirectory() as td:
     controller.executor.shutdown(wait=False)
 
 print("Source-free inline Kaggle config validation passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root,
+        storage_root=tmp / "media",
+        db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local",
+        worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1,
+        cli_retries=1,
+        kernel_timeout=60,
+        accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False,
+        keep_job_inputs=False,
+        keep_source_inputs_for_retry=True,
+        share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    job = {
+        "id": "batch-one-kernel",
+        "task": "image_batch",
+        "prompt": "Lot de 2 images",
+        "meta": {
+            "prompts": ["one", "two"],
+            "batch_count": 2,
+            "steps": 20,
+            "cfg": 1.0,
+            "seed": 10,
+            "aspect": "1:1",
+        },
+    }
+    assert not controller._needs_dataset(job)
+    folder = tmp / "kernel"
+    folder.mkdir()
+    controller._prepare_kernel(job, folder, "")
+    metadata = json.loads((folder / "kernel-metadata.json").read_text(encoding="utf-8"))
+    notebook = json.loads((folder / "job.ipynb").read_text(encoding="utf-8"))
+    assert metadata["dataset_sources"] == []
+    bootstrap = "".join(notebook["cells"][1]["source"])
+    assert '"prompts": ["one", "two"]' in bootstrap
+    worker = "".join(notebook["cells"][2]["source"])
+    assert "def run_image_batch()" in worker
+    controller.executor.shutdown(wait=False)
+
+print("Single-kernel batch notebook validation passed.")
