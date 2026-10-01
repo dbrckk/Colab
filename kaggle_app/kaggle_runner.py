@@ -42,7 +42,7 @@ class KaggleController:
         self._recover_persisted_jobs()
 
     def _recover_persisted_jobs(self) -> None:
-        recoverable = {"submitting", "queued", "running", "downloading"}
+        recoverable = {"submitting", "queued", "running", "recovering", "downloading"}
         interrupted = {"preparing", "uploading_inputs"}
         for row in self.db.list_jobs(200):
             job_id = row.get("id")
