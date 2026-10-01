@@ -22,6 +22,9 @@ from .storage import import_outputs
 TERMINAL_OK = ("complete", "completed")
 TERMINAL_BAD = ("error", "failed", "cancelled", "canceled")
 
+class JobCancelled(RuntimeError):
+    pass
+
 def slugify(value: str) -> str:
     value = re.sub(r"[^a-z0-9-]+", "-", value.lower()).strip("-")
     value = re.sub(r"-+", "-", value)
@@ -34,6 +37,7 @@ class KaggleController:
         # Kaggle GPU sessions are intentionally serialized.
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="kaggle-job")
         self._futures: dict[str, Any] = {}
+        self._cancelled: set[str] = set()
         self._lock = threading.RLock()
 
     def credentials_ready(self) -> bool:
@@ -134,6 +138,47 @@ class KaggleController:
             f"Identifiants Kaggle validés ({mode})"
             + (" et sauvegardés dans le stockage privé configuré." if persist else ".")
         )
+
+    def is_cancelled(self, job_id: str) -> bool:
+        with self._lock:
+            return job_id in self._cancelled
+
+    def cancel(self, job_id: str) -> str:
+        job = self.db.get_job(job_id)
+        if not job:
+            return "Job introuvable."
+        if job.get("status") in {"done", "error", "cancelled"}:
+            return f"Job déjà terminé: {job.get('status')}"
+
+        with self._lock:
+            self._cancelled.add(job_id)
+            future = self._futures.get(job_id)
+            cancelled_before_start = bool(future and future.cancel())
+
+        self.db.update_job(job_id, status="cancel_requested")
+        if cancelled_before_start:
+            self.db.update_job(job_id, status="cancelled")
+            self._cleanup_inputs(job_id)
+            return "Job annulé avant son démarrage."
+
+        kernel_ref = job.get("kernel_ref") or ""
+        meta = job.get("meta") or {}
+        dataset_ref = meta.get("dataset_ref") or ""
+        if kernel_ref:
+            try:
+                self._run(["kernels", "delete", kernel_ref, "-y"], timeout=180)
+            except Exception:
+                pass
+        if dataset_ref:
+            try:
+                self._run(["datasets", "delete", dataset_ref, "-y"], timeout=180)
+            except Exception:
+                pass
+        return "Annulation demandée. Le worker local finalise le nettoyage."
+
+    def _check_cancelled(self, job_id: str) -> None:
+        if self.is_cancelled(job_id):
+            raise JobCancelled("Job annulé par l’utilisateur.")
 
     def _persist_input(self, job_id: str, source: str | None, stem: str) -> str:
         if not source:
@@ -315,6 +360,7 @@ class KaggleController:
         kernel_ref = ""
         dataset_ref = ""
         try:
+            self._check_cancelled(job_id)
             self.db.update_job(job_id, status="preparing")
             with tempfile.TemporaryDirectory(prefix=f"qwen-kaggle-{job_id}-") as td:
                 work = Path(td)
@@ -323,8 +369,10 @@ class KaggleController:
                 dataset_dir.mkdir()
                 kernel_dir.mkdir()
 
+                self._check_cancelled(job_id)
                 self.db.update_job(job_id, status="uploading_inputs")
                 dataset_ref = self._prepare_dataset(job, dataset_dir)
+                self._check_cancelled(job_id)
 
                 kernel_ref = self._prepare_kernel(job, kernel_dir, dataset_ref)
                 self.db.update_job(
@@ -333,6 +381,7 @@ class KaggleController:
                     kernel_ref=kernel_ref,
                     meta_json={**job.get("meta", {}), "dataset_ref": dataset_ref},
                 )
+                self._check_cancelled(job_id)
                 self._run(
                     [
                         "kernels", "push",
@@ -346,6 +395,7 @@ class KaggleController:
 
                 started = time.time()
                 while True:
+                    self._check_cancelled(job_id)
                     if time.time() - started > self.settings.kernel_timeout + 1200:
                         raise TimeoutError("Le job Kaggle a dépassé le délai maximal.")
                     state, raw = self._kernel_status(kernel_ref)
@@ -368,6 +418,7 @@ class KaggleController:
                         raise RuntimeError("Kaggle a signalé une erreur:\n" + logs[-7000:])
                     time.sleep(max(5, self.settings.poll_seconds))
 
+                self._check_cancelled(job_id)
                 download = work / "download"
                 download.mkdir(parents=True, exist_ok=True)
                 self.db.update_job(job_id, status="downloading")
@@ -383,8 +434,15 @@ class KaggleController:
                     raise RuntimeError("Le kernel Kaggle s'est terminé sans produire de fichier.")
                 self.db.update_job(job_id, status="done")
                 self._cleanup_inputs(job_id)
+        except JobCancelled:
+            self.db.update_job(job_id, status="cancelled", error="")
+            self._cleanup_inputs(job_id)
         except Exception as exc:
-            self.db.update_job(job_id, status="error", error=f"{type(exc).__name__}: {exc}")
+            if self.is_cancelled(job_id):
+                self.db.update_job(job_id, status="cancelled", error="")
+                self._cleanup_inputs(job_id)
+            else:
+                self.db.update_job(job_id, status="error", error=f"{type(exc).__name__}: {exc}")
         finally:
             if kernel_ref and self.settings.delete_remote_kernel:
                 try:
@@ -396,6 +454,8 @@ class KaggleController:
                     self._run(["datasets", "delete", dataset_ref, "-y"], timeout=180)
                 except Exception:
                     pass
+            with self._lock:
+                self._cancelled.discard(job_id)
 
     def job(self, job_id: str):
         return self.db.get_job(job_id)
