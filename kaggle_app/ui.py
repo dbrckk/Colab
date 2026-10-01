@@ -22,6 +22,15 @@ textarea, input {font-size: 16px !important;}
 }
 """
 
+def _recent_images(limit=60):
+    items = []
+    for a in controller.recent_artifacts("image", int(limit)):
+        path = a.get("path")
+        if path and Path(path).exists():
+            caption = (a.get("prompt") or a.get("task") or a.get("job_id") or "")[:100]
+            items.append((path, caption))
+    return items
+
 def _jobs_table():
     rows = []
     for j in controller.jobs(100):
@@ -172,6 +181,16 @@ def build_ui():
                     files = gr.Files(label="Tous les fichiers du job")
 
         with gr.Tab("📚 Bibliothèque / Jobs"):
+            with gr.Accordion("🖼 Galerie récente", open=True):
+                with gr.Row():
+                    recent_limit = gr.Slider(12, 100, value=48, step=4, label="Images récentes")
+                    recent_reload = gr.Button("↻ Actualiser la galerie")
+                recent_gallery = gr.Gallery(
+                    label="Images générées récemment",
+                    value=_recent_images(48),
+                    columns=4,
+                    height=520,
+                )
             jobs = gr.Dataframe(
                 headers=["Job ID", "Type", "État", "Kernel Kaggle", "Prompt", "Erreur"],
                 value=_jobs_table(),
@@ -224,6 +243,7 @@ def build_ui():
         retry.click(_retry_job, [job_id], [job_id, submit_info, jobs])
         cancel.click(_cancel_job, [job_id], [submit_info, jobs])
         reload_jobs.click(_jobs_table, [], [jobs])
+        recent_reload.click(_recent_images, [recent_limit], [recent_gallery])
         open_job.click(_refresh, [lookup], [lib_status, lib_gallery, lib_video, lib_files, jobs])
         retry_job_btn.click(_retry_job, [lookup], [lookup, lib_status, jobs])
         logs_btn.click(_remote_logs, [lookup], [lib_logs])
