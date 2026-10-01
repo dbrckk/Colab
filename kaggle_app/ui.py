@@ -22,6 +22,12 @@ textarea, input {font-size: 16px !important;}
 }
 """
 
+def _dashboard():
+    try:
+        return controller.dashboard_summary()
+    except Exception as e:
+        return f"Diagnostic tableau de bord indisponible: {type(e).__name__}: {e}"
+
 def _recent_images(limit=60):
     items = []
     for a in controller.recent_artifacts("image", int(limit)):
@@ -169,6 +175,7 @@ def build_ui():
             "<div class='hero'><h1>Qwen Kaggle Studio</h1>"
             "<p>Prompt/upload → Kaggle GPU → récupération automatique → bibliothèque locale.</p></div>"
         )
+        dashboard = gr.Markdown(_dashboard())
 
         with gr.Tab("✨ Générer"):
             with gr.Row():
@@ -316,6 +323,8 @@ def build_ui():
                 [status, gallery, video, files, jobs],
                 show_progress="hidden",
             )
+            dashboard_timer = gr.Timer(value=10.0, active=True)
+            dashboard_timer.tick(_dashboard, [], [dashboard], show_progress="hidden")
         except Exception:
             pass
 
