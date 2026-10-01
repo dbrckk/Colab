@@ -456,3 +456,40 @@ with tempfile.TemporaryDirectory() as td:
     controller.executor.shutdown(wait=False)
 
 print("Source-backed retry retention validation passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root,
+        storage_root=tmp / "media",
+        db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local",
+        worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1,
+        cli_retries=1,
+        kernel_timeout=60,
+        accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False,
+        keep_job_inputs=False,
+        keep_source_inputs_for_retry=True,
+        share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    controller.db.create_job("zip-job", "image", "zip prompt", {"steps": 15})
+    controller.db.update_job("zip-job", status="done")
+    media = settings.storage_root / "zip-job"
+    media.mkdir(parents=True)
+    image_path = media / "image.png"
+    image_path.write_bytes(b"image")
+    controller.db.add_artifact("zip-job", str(image_path), "image")
+    archive = Path(controller.export_job_archive("zip-job"))
+    assert archive.exists()
+    import zipfile
+    with zipfile.ZipFile(archive) as zf:
+        names = set(zf.namelist())
+        assert "job.json" in names
+        assert "media/image.png" in names
+    controller.executor.shutdown(wait=False)
+
+print("Job ZIP export validation passed.")
