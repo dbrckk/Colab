@@ -379,6 +379,39 @@ class KaggleController:
             except Exception:
                 pass
 
+    def submit_batch(
+        self,
+        prompts: str,
+        negative_prompt: str = "",
+        steps: int = 25,
+        cfg: float = 1.0,
+        seed: int = -1,
+        aspect: str = "1:1",
+        max_batch: int = 20,
+    ) -> list[str]:
+        lines = [line.strip() for line in (prompts or "").splitlines() if line.strip()]
+        if not lines:
+            raise ValueError("Aucun prompt dans le lot.")
+        if len(lines) > max_batch:
+            raise ValueError(f"Maximum {max_batch} prompts par lot.")
+        ids = []
+        for index, prompt in enumerate(lines):
+            batch_seed = int(seed)
+            if batch_seed >= 0:
+                batch_seed += index
+            ids.append(
+                self.submit(
+                    "image",
+                    prompt,
+                    negative_prompt,
+                    steps,
+                    cfg,
+                    batch_seed,
+                    aspect,
+                )
+            )
+        return ids
+
     def _prepare_dataset(self, job: dict[str, Any], folder: Path, dataset_ref: str | None = None) -> str:
         dataset_ref = dataset_ref or self._dataset_ref(job)
         config = {
