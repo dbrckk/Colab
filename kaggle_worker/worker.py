@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import base64
 import os
 import random
 import shutil
+import socket
 import subprocess
 import sys
 import tarfile
@@ -117,7 +119,7 @@ def compile_sdcli() -> Path:
         [
             "cmake", "-S", ".", "-B", "build", "-G", "Ninja",
             "-DSD_CUDA=ON", "-DCMAKE_BUILD_TYPE=Release",
-            "-DSD_WEBP=OFF", "-DSD_WEBM=OFF",
+            "-DSD_WEBP=OFF", "-DSD_WEBM=OFF", "-DSD_SERVER_BUILD_FRONTEND=OFF",
         ],
         cwd=src,
         check=True,
@@ -168,6 +170,114 @@ def ensure_sdcli() -> Path:
     return compile_sdcli()
 
 _HF_READY = False
+
+def _binary_works(path: Path) -> bool:
+    try:
+        path.chmod(0o755)
+        env = os.environ.copy()
+        bindir = str(path.parent)
+        env["LD_LIBRARY_PATH"] = bindir + (":" + env["LD_LIBRARY_PATH"] if env.get("LD_LIBRARY_PATH") else "")
+        p = subprocess.run(
+            [str(path), "--help"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=env,
+            timeout=20,
+        )
+        return p.returncode in (0, 1)
+    except Exception:
+        return False
+
+def ensure_sdserver(sdcli: Path) -> Path | None:
+    sibling = sdcli.parent / "sd-server"
+    if sibling.exists() and _binary_works(sibling):
+        return sibling
+
+    # Prebuilt runtime extraction normally includes the server. If the CLI came
+    # from a local build, compile only the missing server target on demand.
+    src = WORK / "stable-diffusion.cpp"
+    if src.exists():
+        try:
+            subprocess.run(
+                [
+                    "cmake", "-S", ".", "-B", "build", "-G", "Ninja",
+                    "-DSD_CUDA=ON", "-DCMAKE_BUILD_TYPE=Release",
+                    "-DSD_WEBP=OFF", "-DSD_WEBM=OFF",
+                    "-DSD_SERVER_BUILD_FRONTEND=OFF",
+                ],
+                cwd=src,
+                check=True,
+                timeout=600,
+            )
+            subprocess.run(
+                ["cmake", "--build", "build", "--target", "sd-server", "-j", "4"],
+                cwd=src,
+                check=True,
+                timeout=2400,
+            )
+            candidate = src / "build" / "bin" / "sd-server"
+            if candidate.exists() and _binary_works(candidate):
+                return candidate
+        except Exception as exc:
+            print("sd-server indisponible, fallback sd-cli:", exc, flush=True)
+    return None
+
+def _free_local_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+def _wait_server(url: str, process: subprocess.Popen, timeout: int = 300) -> None:
+    deadline = __import__("time").time() + timeout
+    last_error = None
+    while __import__("time").time() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError(f"sd-server s'est arrêté prématurément (code={process.returncode}).")
+        try:
+            with urllib.request.urlopen(url + "/v1/models", timeout=5) as response:
+                if 200 <= int(response.status) < 300:
+                    return
+        except Exception as exc:
+            last_error = exc
+        __import__("time").sleep(2)
+    raise TimeoutError(f"sd-server non prêt après {timeout}s: {last_error}")
+
+def _server_txt2img(
+    base_url: str,
+    prompt: str,
+    negative_prompt: str,
+    width: int,
+    height: int,
+    steps: int,
+    cfg: float,
+    seed: int,
+) -> bytes:
+    body = json.dumps({
+        "prompt": prompt,
+        "negative_prompt": negative_prompt,
+        "width": int(width),
+        "height": int(height),
+        "steps": int(steps),
+        "cfg_scale": float(cfg),
+        "seed": int(seed),
+        "batch_size": 1,
+        "sampler_name": "euler",
+    }).encode("utf-8")
+    request = urllib.request.Request(
+        base_url + "/sdapi/v1/txt2img",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=10800) as response:
+        data = json.loads(response.read().decode("utf-8"))
+    images = data.get("images") or []
+    if not images:
+        raise RuntimeError("sd-server n'a retourné aucune image.")
+    encoded = str(images[0])
+    if "," in encoded and encoded.lstrip().startswith("data:"):
+        encoded = encoded.split(",", 1)[1]
+    return base64.b64decode(encoded)
 
 def hf_file(repo_id: str, filename: str) -> Path:
     global _HF_READY
@@ -276,21 +386,93 @@ def run_image_batch():
     dit = models["dit"]
     vae = models["vae"]
     width, height = _image_dimensions()
-
     base_seed = int(CONFIG.get("seed", -1))
+    seeds = [
+        base_seed + index if base_seed >= 0 else random.randint(1, 2_000_000_000)
+        for index in range(len(prompts))
+    ]
     files = []
-    seeds = []
-    for index, prompt in enumerate(prompts, 1):
-        seed = base_seed + (index - 1) if base_seed >= 0 else random.randint(1, 2_000_000_000)
-        out = OUT / f"image_{index:03d}.png"
-        print(f"[batch] {index}/{len(prompts)} seed={seed}", flush=True)
-        _run_sd_image(sdcli, heretic, dit, vae, prompt, out, seed, width, height)
-        files.append(out.name)
-        seeds.append(seed)
+    batch_backend = "sd-cli"
+
+    sdserver = ensure_sdserver(sdcli)
+    server_process = None
+    server_log = None
+    if sdserver is not None:
+        port = _free_local_port()
+        base_url = f"http://127.0.0.1:{port}"
+        log_path = WORK / "sd-server-batch.log"
+        server_log = log_path.open("w", encoding="utf-8")
+        env = os.environ.copy()
+        bindir = str(sdserver.parent)
+        env["LD_LIBRARY_PATH"] = bindir + (":" + env["LD_LIBRARY_PATH"] if env.get("LD_LIBRARY_PATH") else "")
+        cmd = [
+            str(sdserver),
+            "--diffusion-model", str(dit),
+            "--vae", str(vae),
+            "--llm", str(heretic),
+            "--diffusion-fa",
+            "--offload-to-cpu",
+            "--cfg-scale", str(float(CONFIG.get("cfg", 1.0))),
+            "--conditioning-cache-size", "4",
+            "--listen-ip", "127.0.0.1",
+            "--listen-port", str(port),
+            "--log-level", "warn",
+        ]
+        try:
+            server_process = subprocess.Popen(
+                cmd,
+                stdout=server_log,
+                stderr=subprocess.STDOUT,
+                env=env,
+            )
+            _wait_server(base_url, server_process)
+            batch_backend = "sd-server"
+            for index, (prompt, seed) in enumerate(zip(prompts, seeds), 1):
+                out = OUT / f"image_{index:03d}.png"
+                print(f"[batch/server] {index}/{len(prompts)} seed={seed}", flush=True)
+                image_bytes = _server_txt2img(
+                    base_url,
+                    prompt,
+                    CONFIG.get("negative_prompt", ""),
+                    width,
+                    height,
+                    int(CONFIG.get("steps", 25)),
+                    float(CONFIG.get("cfg", 1.0)),
+                    seed,
+                )
+                out.write_bytes(image_bytes)
+                files.append(out.name)
+        except Exception as exc:
+            print("Batch sd-server échoué, fallback sd-cli:", exc, flush=True)
+            files = []
+            batch_backend = "sd-cli"
+        finally:
+            if server_process is not None:
+                try:
+                    server_process.terminate()
+                    server_process.wait(timeout=15)
+                except Exception:
+                    try:
+                        server_process.kill()
+                    except Exception:
+                        pass
+            if server_log is not None:
+                try:
+                    server_log.close()
+                except Exception:
+                    pass
+
+    if batch_backend == "sd-cli":
+        for index, (prompt, seed) in enumerate(zip(prompts, seeds), 1):
+            out = OUT / f"image_{index:03d}.png"
+            print(f"[batch/cli] {index}/{len(prompts)} seed={seed}", flush=True)
+            _run_sd_image(sdcli, heretic, dit, vae, prompt, out, seed, width, height)
+            files.append(out.name)
 
     write_result(
         "done",
         batch_count=len(prompts),
+        batch_backend=batch_backend,
         seeds=seeds,
         width=width,
         height=height,
