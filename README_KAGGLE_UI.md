@@ -20,6 +20,7 @@ Cette interface transforme le repo en **contrôleur de jobs Kaggle**.
    L'ancien `KAGGLE_KEY` reste accepté en fallback.
 3. Dans **Générer**, choisis :
    - `image` : prompt → Qwen Image 2.1 / Heretic GGUF sur un GPU Kaggle.
+   - `image_edit` : image source + instruction → édition Qwen Image 2.1 avec le mmproj Heretic.
    - `video_faceswap` : visage source + vidéo cible → FaceFusion Ultra sur Kaggle.
 4. L'UI :
    - crée un job local ;
@@ -92,3 +93,10 @@ Le worker Kaggle utilise FaceFusion Ultra avec :
 ## Sécurité de l'interface
 
 Quand `QWEN_KAGGLE_SHARE=true`, l'URL Gradio publique est protégée par un utilisateur/mot de passe. Si tu ne définis pas `QWEN_UI_PASSWORD`, un mot de passe aléatoire est généré et affiché dans la cellule de lancement. Cela évite qu'une personne ayant récupéré l'URL consomme ton quota Kaggle.
+
+
+## Optimisations de démarrage
+
+- Les téléchargements Qwen (DiT, VAE, Heretic et mmproj si nécessaire) sont lancés en parallèle sur le worker Kaggle.
+- Le runtime `stable-diffusion.cpp` tente d'abord un binaire CUDA précompilé.
+- Si le runtime précompilé ne fonctionne pas, le worker installe automatiquement les outils de build manquants puis compile `sd-cli`.
