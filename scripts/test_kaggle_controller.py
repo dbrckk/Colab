@@ -330,3 +330,37 @@ with tempfile.TemporaryDirectory() as td:
     controller.executor.shutdown(wait=False)
 
 print("Cancelled input retention validation passed.")
+
+
+from kaggle_app.kaggle_runner import _is_transient_cli_error
+
+assert _is_transient_cli_error("503 Service Unavailable")
+assert _is_transient_cli_error("connection reset by peer")
+assert _is_transient_cli_error("429 Too Many Requests")
+assert not _is_transient_cli_error("401 Unauthorized")
+assert not _is_transient_cli_error("usage: kaggle kernels push")
+print("Transient Kaggle error classification passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root,
+        storage_root=tmp / "media",
+        db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local",
+        worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1,
+        cli_retries=1,
+        kernel_timeout=60,
+        accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False,
+        keep_job_inputs=False,
+        share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    job = {"id": "ref-test", "task": "image", "prompt": "x", "meta": {}}
+    assert controller._dataset_ref(job) == "ci-user/qwen-input-ref-test"
+    controller.executor.shutdown(wait=False)
+
+print("Remote dataset reference persistence validation passed.")
