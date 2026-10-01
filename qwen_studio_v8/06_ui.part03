@@ -7,5 +7,7 @@ demo.launch(
     quiet=True,
     prevent_thread_lock=True,
     show_error=True,
+    theme=gr.themes.Soft(primary_hue='violet', neutral_hue='slate'),
+    css=CUSTOM_CSS,
 )
 print("✅ Gradio prêt — ouvre l’URL publique. Les images s’affichent uniquement dans Gradio.")
