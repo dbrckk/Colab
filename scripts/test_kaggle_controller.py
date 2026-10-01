@@ -612,3 +612,76 @@ with tempfile.TemporaryDirectory() as td:
     controller.executor.shutdown(wait=False)
 
 print("Downloaded output validation passed.")
+
+
+# Full controller state-machine integration test without contacting Kaggle.
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root,
+        storage_root=tmp / "media",
+        db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local",
+        worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1,
+        cli_retries=1,
+        kernel_timeout=60,
+        accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False,
+        keep_job_inputs=False,
+        keep_source_inputs_for_retry=True,
+        share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    controller.db.create_job(
+        "e2e-job",
+        "image",
+        "integration prompt",
+        {
+            "negative_prompt": "",
+            "steps": 12,
+            "cfg": 1.0,
+            "seed": 42,
+            "aspect": "1:1",
+            "source_image": "",
+            "target_video": "",
+        },
+    )
+
+    controller._prepare_dataset = lambda job, folder, dataset_ref=None: (
+        dataset_ref or "ci-user/qwen-input-e2e-job"
+    )
+    controller._kernel_status = lambda ref: ("complete", "complete")
+
+    def fake_run(args, timeout=None, retries=None):
+        if args[:2] == ["kernels", "output"]:
+            out_dir = Path(args[args.index("-p") + 1])
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / "result.json").write_text(
+                json.dumps({
+                    "status": "done",
+                    "task": "image",
+                    "worker_version": "ci",
+                    "seed": 42,
+                    "width": 1024,
+                    "height": 1024,
+                    "steps": 12,
+                    "files": ["image.png"],
+                }),
+                encoding="utf-8",
+            )
+            (out_dir / "image.png").write_bytes(b"valid-image-placeholder")
+        return "ok"
+
+    controller._run = fake_run
+    controller._execute("e2e-job")
+
+    finished = controller.db.get_job("e2e-job")
+    assert finished["status"] == "done", finished
+    assert finished["meta"]["result_manifest"]["seed"] == 42
+    artifacts = controller.db.artifacts("e2e-job")
+    assert any(a["kind"] == "image" for a in artifacts)
+    assert any(Path(a["path"]).name == "result.json" for a in artifacts)
+    controller.executor.shutdown(wait=False)
+
+print("Simulated end-to-end Kaggle controller flow passed.")
