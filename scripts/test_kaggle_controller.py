@@ -861,3 +861,54 @@ with tempfile.TemporaryDirectory() as td:
     controller.executor.shutdown(wait=False)
 
 print("Pre-persistence validation flow passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root,
+        storage_root=tmp / "media",
+        db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local",
+        worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1,
+        cli_retries=1,
+        kernel_timeout=60,
+        accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False,
+        keep_job_inputs=False,
+        keep_source_inputs_for_retry=True,
+        share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    plain_job = {
+        "id": "plain-image",
+        "task": "image",
+        "prompt": "hello inline",
+        "meta": {"steps": 21, "cfg": 1.0, "seed": 7, "aspect": "1:1"},
+    }
+    assert not controller._needs_dataset(plain_job)
+    kernel_dir = tmp / "inline-kernel"
+    kernel_dir.mkdir()
+    ref = controller._prepare_kernel(plain_job, kernel_dir, "")
+    metadata = json.loads((kernel_dir / "kernel-metadata.json").read_text(encoding="utf-8"))
+    notebook = json.loads((kernel_dir / "job.ipynb").read_text(encoding="utf-8"))
+    assert metadata["dataset_sources"] == []
+    assert ref == "ci-user/qwen-studio-plain-image"
+    assert len(notebook["cells"]) == 3
+    bootstrap = "".join(notebook["cells"][1]["source"])
+    assert "/kaggle/working/job_config.json" in bootstrap
+    assert "hello inline" in bootstrap
+    worker = "".join(notebook["cells"][2]["source"])
+    assert "def run_image()" in worker
+
+    source_job = {
+        "id": "edit-image",
+        "task": "image_edit",
+        "prompt": "edit",
+        "meta": {"source_image": "/tmp/source.png"},
+    }
+    assert controller._needs_dataset(source_job)
+    controller.executor.shutdown(wait=False)
+
+print("Source-free inline Kaggle config validation passed.")
