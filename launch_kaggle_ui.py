@@ -35,7 +35,8 @@ import shutil
 ensure_dependencies()
 
 from kaggle_app.config import SETTINGS
-from kaggle_app.ui import build_ui
+import gradio as gr
+from kaggle_app.ui import build_ui, CSS
 
 if __name__ == "__main__":
     demo = build_ui()
@@ -46,4 +47,6 @@ if __name__ == "__main__":
         show_error=True,
         prevent_thread_lock=False,
         allowed_paths=[str(SETTINGS.storage_root)],
+        theme=gr.themes.Soft(),
+        css=CSS,
     )
