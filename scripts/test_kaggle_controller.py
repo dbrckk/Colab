@@ -579,6 +579,7 @@ with tempfile.TemporaryDirectory() as td:
     result_json.write_text('{"status":"done"}', encoding="utf-8")
     image.write_bytes(b"image-data")
     video.write_bytes(b"video-data")
+    controller._media_integrity_ok = lambda path, kind: path.exists() and path.stat().st_size > 0
 
     manifest = controller._validate_downloaded_outputs(
         {"task": "image"},
@@ -670,7 +671,9 @@ with tempfile.TemporaryDirectory() as td:
                 }),
                 encoding="utf-8",
             )
-            (out_dir / "image.png").write_bytes(b"valid-image-placeholder")
+            (out_dir / "image.png").write_bytes(base64.b64decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZcR8AAAAASUVORK5CYII="
+            ))
         return "ok"
 
     controller._run = fake_run
@@ -685,3 +688,36 @@ with tempfile.TemporaryDirectory() as td:
     controller.executor.shutdown(wait=False)
 
 print("Simulated end-to-end Kaggle controller flow passed.")
+
+
+# Real image integrity check with a minimal valid PNG.
+import base64
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root,
+        storage_root=tmp / "media",
+        db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local",
+        worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1,
+        cli_retries=1,
+        kernel_timeout=60,
+        accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False,
+        keep_job_inputs=False,
+        keep_source_inputs_for_retry=True,
+        share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    valid_png = tmp / "valid.png"
+    valid_png.write_bytes(base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZcR8AAAAASUVORK5CYII="
+    ))
+    invalid_png = tmp / "invalid.png"
+    invalid_png.write_bytes(b"not-an-image")
+    assert controller._media_integrity_ok(valid_png, "image")
+    assert not controller._media_integrity_ok(invalid_png, "image")
+    controller.executor.shutdown(wait=False)
+
+print("Media integrity validation passed.")
