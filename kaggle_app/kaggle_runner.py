@@ -556,6 +556,33 @@ class KaggleController:
             with self._lock:
                 self._cancelled.discard(job_id)
 
+    def queue_position(self, job_id: str) -> int | None:
+        active = {
+            "preparing", "uploading_inputs", "submitting",
+            "queued", "running", "recovering", "downloading",
+        }
+        rows = [
+            j for j in self.db.list_jobs(500)
+            if j.get("status") in active
+        ]
+        rows.sort(key=lambda j: float(j.get("created_at") or 0))
+        for index, row in enumerate(rows, 1):
+            if row.get("id") == job_id:
+                return index
+        return None
+
+    def job_storage_bytes(self, job_id: str) -> int:
+        total = 0
+        root = self.settings.storage_root / job_id
+        if root.exists():
+            for p in root.rglob("*"):
+                if p.is_file():
+                    try:
+                        total += p.stat().st_size
+                    except OSError:
+                        pass
+        return total
+
     def retry(self, job_id: str) -> str:
         old = self.db.get_job(job_id)
         if not old:
