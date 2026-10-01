@@ -748,5 +748,8 @@ class KaggleController:
     def artifacts(self, job_id: str):
         return self.db.artifacts(job_id)
 
+    def recent_artifacts(self, kind: str | None = None, limit: int = 100):
+        return self.db.recent_artifacts(kind, limit)
+
     def jobs(self, limit: int = 100):
         return self.db.list_jobs(limit)
