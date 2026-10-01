@@ -96,3 +96,10 @@ class JobDB:
                 "SELECT * FROM artifacts WHERE job_id=? ORDER BY created_at,id", (job_id,)
             ).fetchall()
         return [dict(r) for r in rows]
+
+
+    def delete_job(self, job_id: str) -> None:
+        with _LOCK, self._conn() as con:
+            con.execute("DELETE FROM artifacts WHERE job_id=?", (job_id,))
+            con.execute("DELETE FROM jobs WHERE id=?", (job_id,))
+            con.commit()
