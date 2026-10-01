@@ -364,3 +364,58 @@ with tempfile.TemporaryDirectory() as td:
     controller.executor.shutdown(wait=False)
 
 print("Remote dataset reference persistence validation passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root,
+        storage_root=tmp / "media",
+        db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local",
+        worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1,
+        cli_retries=1,
+        kernel_timeout=60,
+        accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False,
+        keep_job_inputs=False,
+        share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    submitted = []
+    def fake_submit(task, prompt, negative_prompt="", steps=25, cfg=1.0, seed=-1, aspect="1:1", source_image=None, target_video=None):
+        submitted.append((task, prompt, seed))
+        return f"id-{len(submitted)}"
+    controller.submit = fake_submit
+    ids = controller.submit_batch("first\n\nsecond\nthird", seed=100)
+    assert ids == ["id-1", "id-2", "id-3"]
+    assert submitted == [
+        ("image", "first", 100),
+        ("image", "second", 101),
+        ("image", "third", 102),
+    ]
+    try:
+        controller.submit_batch("\n".join(f"p{i}" for i in range(21)))
+        raise AssertionError("batch limit was not enforced")
+    except ValueError:
+        pass
+    controller.executor.shutdown(wait=False)
+
+print("Batch submission validation passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    db = JobDB(tmp / "jobs.sqlite3")
+    db.create_job("lib1", "image", "prompt one", {})
+    db.update_job("lib1", status="done")
+    db.add_artifact("lib1", str(tmp / "one.png"), "image")
+    db.add_artifact("lib1", str(tmp / "one.json"), "file")
+    recent = db.recent_artifacts("image", 10)
+    assert len(recent) == 1
+    assert recent[0]["job_id"] == "lib1"
+    assert recent[0]["prompt"] == "prompt one"
+    assert recent[0]["kind"] == "image"
+
+print("Recent artifact library validation passed.")
