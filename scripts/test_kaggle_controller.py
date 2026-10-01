@@ -28,3 +28,22 @@ assert kind_for(Path("x.mp4")) == "video"
 assert kind_for(Path("x.json")) == "file"
 
 print("Kaggle controller tests passed.")
+
+
+import json
+
+repo_root = Path(__file__).resolve().parents[1]
+controller_nb = repo_root / "Qwen_Kaggle_Studio_Controller.ipynb"
+nb = json.loads(controller_nb.read_text(encoding="utf-8"))
+assert nb["nbformat"] == 4
+controller_code = "\n".join(
+    "".join(cell.get("source", []))
+    for cell in nb.get("cells", [])
+    if cell.get("cell_type") == "code"
+)
+assert "drive.mount('/content/drive')" in controller_code
+assert "QWEN_KAGGLE_STORAGE" in controller_code
+assert "QWEN_KAGGLE_DB" in controller_code
+assert "QWEN_KAGGLE_ENV_FILE" in controller_code
+assert "launch_kaggle_ui.py" in controller_code
+print("Kaggle controller notebook validation passed.")
