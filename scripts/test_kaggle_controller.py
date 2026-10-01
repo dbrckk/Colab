@@ -1112,3 +1112,35 @@ with tempfile.TemporaryDirectory() as td:
     assert row["meta"]["steps"] == 33
 
 print("list_jobs metadata decoding validation passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root,
+        storage_root=tmp / "media",
+        db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local",
+        worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1,
+        cli_retries=1,
+        kernel_timeout=60,
+        accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False,
+        keep_job_inputs=False,
+        keep_source_inputs_for_retry=True,
+        share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    a = tmp / "same.mp4"
+    b = tmp / "same.mov"
+    payload = b"same-bytes-with-different-extension"
+    a.write_bytes(payload)
+    b.write_bytes(payload)
+    pa = Path(controller._persist_input("x1", str(a), "target_video"))
+    pb = Path(controller._persist_input("x2", str(b), "target_video"))
+    assert pa == pb
+    assert len([p for p in pa.parent.iterdir() if p.is_file() and not p.name.startswith(".")]) == 1
+    controller.executor.shutdown(wait=False)
+
+print("Cross-extension input deduplication validation passed.")
