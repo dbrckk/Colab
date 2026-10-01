@@ -466,6 +466,19 @@ class KaggleController:
 
         digest = self._hash_file(src)
         suffix = src.suffix.lower()
+
+        # Same bytes may arrive under a renamed extension; reuse any existing
+        # canonical object with the same SHA-256 rather than storing it twice.
+        existing = next(
+            (
+                candidate for candidate in store.glob(f"{digest}.*")
+                if candidate.is_file() and not candidate.name.startswith(".")
+            ),
+            None,
+        )
+        if existing is not None:
+            return str(existing)
+
         dest = store / f"{digest}{suffix}"
         if not dest.exists() or dest.stat().st_size != src.stat().st_size:
             tmp = store / f".{digest}.{uuid.uuid4().hex[:8]}.part"
