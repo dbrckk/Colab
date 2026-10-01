@@ -92,6 +92,13 @@ def _refresh(job_id):
     files = [a["path"] for a in artifacts if Path(a["path"]).exists()]
 
     status = f"{j['status']}\nKaggle: {j['kernel_ref'] or '—'}"
+    position = controller.queue_position(job_id)
+    if position is not None:
+        status += f"\nPosition file locale : {position}"
+    size = controller.job_storage_bytes(job_id)
+    if size:
+        status += f"\nStockage récupéré : {size / (1024**2):.1f} Mo"
+    status += f"\nFichiers récupérés : {len(files)}"
     if j["error"]:
         status += "\n" + j["error"]
     return status, images, (videos[0] if videos else None), files, _jobs_table()
