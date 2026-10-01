@@ -55,6 +55,7 @@ class KaggleController:
         self._futures: dict[str, Any] = {}
         self._cancelled: set[str] = set()
         self._lock = threading.RLock()
+        self._storage_cache = {"ts": 0.0, "bytes": 0}
         self._recover_persisted_jobs()
 
     def _recover_persisted_jobs(self) -> None:
@@ -231,6 +232,7 @@ class KaggleController:
                 if not artifacts and not self.db.artifacts(job_id):
                     raise RuntimeError("Aucun output Kaggle récupérable.")
                 self.db.update_job(job_id, status="done", error="")
+                self._storage_cache["ts"] = 0.0
                 self._cleanup_inputs(job_id)
         except JobCancelled:
             self.db.update_job(job_id, status="cancelled", error="")
@@ -777,6 +779,7 @@ class KaggleController:
                 for path, kind in artifacts:
                     self.db.add_artifact(job_id, str(path), kind)
                 self.db.update_job(job_id, status="done")
+                self._storage_cache["ts"] = 0.0
                 self._cleanup_inputs(job_id)
         except JobCancelled:
             self.db.update_job(job_id, status="cancelled", error="")
@@ -842,6 +845,7 @@ class KaggleController:
             if reclaimed >= 1024**3
             else f"{reclaimed / 1024**2:.1f} Mo"
         )
+        self._storage_cache["ts"] = 0.0
         return (
             f"Nettoyage terminé • {removed_exports} export(s) ancien(s) • "
             f"{removed_inputs} dossier(s) d'entrée orphelin(s) • {amount} libéré(s)."
@@ -859,17 +863,22 @@ class KaggleController:
         failed = sum(1 for j in jobs if j.get("status") in {"error", "interrupted"})
         cancelled = sum(1 for j in jobs if j.get("status") == "cancelled")
 
-        total_bytes = 0
-        try:
-            if self.settings.storage_root.exists():
-                for p in self.settings.storage_root.rglob("*"):
-                    if p.is_file():
-                        try:
-                            total_bytes += p.stat().st_size
-                        except OSError:
-                            pass
-        except Exception:
-            pass
+        now = time.time()
+        if now - float(self._storage_cache.get("ts") or 0) > 60:
+            total_bytes = 0
+            try:
+                if self.settings.storage_root.exists():
+                    for p in self.settings.storage_root.rglob("*"):
+                        if p.is_file():
+                            try:
+                                total_bytes += p.stat().st_size
+                            except OSError:
+                                pass
+            except Exception:
+                pass
+            self._storage_cache = {"ts": now, "bytes": total_bytes}
+        else:
+            total_bytes = int(self._storage_cache.get("bytes") or 0)
 
         if total_bytes >= 1024**3:
             storage = f"{total_bytes / 1024**3:.2f} Go"
@@ -1028,6 +1037,7 @@ class KaggleController:
         except OSError:
             pass
         self.db.delete_job(job_id)
+        self._storage_cache["ts"] = 0.0
         return f"Job {job_id} supprimé du stockage local."
 
     def job(self, job_id: str):
