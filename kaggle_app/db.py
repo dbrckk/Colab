@@ -37,13 +37,46 @@ class JobDB:
     def __init__(self, path: Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self._conn() as con:
-            con.executescript(SCHEMA)
+        self.recovered_corrupt_path: Path | None = None
+        self._initialize_database()
+
+    def _initialize_database(self) -> None:
+        try:
+            with self._conn() as con:
+                row = con.execute("PRAGMA integrity_check").fetchone()
+                integrity = str(row[0]).lower() if row else "unknown"
+                if integrity != "ok":
+                    raise sqlite3.DatabaseError(f"integrity_check={integrity}")
+                con.executescript(SCHEMA)
+        except sqlite3.DatabaseError:
+            if self.path.exists():
+                stamp = time.strftime("%Y%m%d-%H%M%S")
+                backup = self.path.with_name(self.path.name + f".corrupt-{stamp}")
+                self.path.replace(backup)
+                self.recovered_corrupt_path = backup
+            with self._conn() as con:
+                con.executescript(SCHEMA)
 
     def _conn(self):
         con = sqlite3.connect(self.path, timeout=30, check_same_thread=False)
         con.row_factory = sqlite3.Row
+        # Conservative settings for mounted/persistent filesystems such as Google Drive.
+        con.execute("PRAGMA foreign_keys=ON")
+        con.execute("PRAGMA busy_timeout=30000")
+        con.execute("PRAGMA journal_mode=DELETE")
+        con.execute("PRAGMA synchronous=FULL")
         return con
+
+    def integrity_status(self) -> str:
+        try:
+            with self._conn() as con:
+                row = con.execute("PRAGMA integrity_check").fetchone()
+            result = str(row[0]) if row else "unknown"
+            if self.recovered_corrupt_path:
+                return f"{result} (ancienne base sauvegardée: {self.recovered_corrupt_path})"
+            return result
+        except Exception as exc:
+            return f"error: {type(exc).__name__}: {exc}"
 
     def create_job(self, job_id: str, task: str, prompt: str, meta: dict[str, Any]) -> None:
         now = time.time()
