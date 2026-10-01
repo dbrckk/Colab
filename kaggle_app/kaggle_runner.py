@@ -134,6 +134,7 @@ class KaggleController:
         expected_kind = {
             "image": "image",
             "image_edit": "image",
+            "image_batch": "image",
             "video_faceswap": "video",
         }.get(job.get("task"))
 
@@ -540,28 +541,39 @@ class KaggleController:
         aspect: str = "1:1",
         max_batch: int = 20,
     ) -> list[str]:
+        if not self.credentials_ready():
+            raise RuntimeError(
+                "Configure d'abord KAGGLE_USERNAME et KAGGLE_API_TOKEN "
+                "(ou KAGGLE_KEY legacy)."
+            )
         lines = [line.strip() for line in (prompts or "").splitlines() if line.strip()]
         if not lines:
             raise ValueError("Aucun prompt dans le lot.")
         if len(lines) > max_batch:
             raise ValueError(f"Maximum {max_batch} prompts par lot.")
-        ids = []
-        for index, prompt in enumerate(lines):
-            batch_seed = int(seed)
-            if batch_seed >= 0:
-                batch_seed += index
-            ids.append(
-                self.submit(
-                    "image",
-                    prompt,
-                    negative_prompt,
-                    steps,
-                    cfg,
-                    batch_seed,
-                    aspect,
-                )
-            )
-        return ids
+
+        job_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
+        meta = {
+            "prompts": lines,
+            "negative_prompt": negative_prompt or "",
+            "steps": int(steps),
+            "cfg": float(cfg),
+            "seed": int(seed),
+            "aspect": aspect,
+            "source_image": "",
+            "target_video": "",
+            "batch_count": len(lines),
+        }
+        self.db.create_job(
+            job_id,
+            "image_batch",
+            f"Lot de {len(lines)} images",
+            meta,
+        )
+        with self._lock:
+            self._futures[job_id] = self.executor.submit(self._execute, job_id)
+        return [job_id]
+
 
     def _prepare_dataset(self, job: dict[str, Any], folder: Path, dataset_ref: str | None = None) -> str:
         dataset_ref = dataset_ref or self._dataset_ref(job)
@@ -1004,6 +1016,16 @@ class KaggleController:
             raise RuntimeError("Ce job est encore actif.")
 
         meta = old.get("meta") or {}
+        if old.get("task") == "image_batch":
+            prompts = meta.get("prompts") or []
+            return self.submit_batch(
+                "\n".join(str(x) for x in prompts),
+                meta.get("negative_prompt", ""),
+                meta.get("steps", 25),
+                meta.get("cfg", 1.0),
+                meta.get("seed", -1),
+                meta.get("aspect", "1:1"),
+            )[0]
         return self.submit(
             old.get("task") or "image",
             old.get("prompt") or "",
