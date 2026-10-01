@@ -188,6 +188,7 @@ def run_image():
         "--vae", str(vae),
         "--llm", str(heretic),
         "-p", CONFIG.get("prompt", ""),
+        "--negative-prompt", CONFIG.get("negative_prompt", ""),
         "--cfg-scale", str(float(CONFIG.get("cfg", 1.0))),
         "--sampling-method", "euler",
         "--steps", str(int(CONFIG.get("steps", 25))),
@@ -205,6 +206,72 @@ def run_image():
     if p.returncode != 0 or not out.exists():
         raise RuntimeError(((p.stdout or "") + "\n" + (p.stderr or ""))[-7000:])
     write_result("done", task="image", seed=seed, files=[out.name])
+
+def run_image_edit():
+    sdcli = ensure_sdcli()
+    source_name = CONFIG.get("source_image")
+    if not source_name:
+        raise ValueError("image_edit requiert source_image.")
+    source = INPUT / source_name
+    if not source.exists():
+        raise FileNotFoundError(f"Image source absente: {source_name}")
+
+    heretic = hf_file(
+        "pottokao/Qwen-Image-2.1-Text-Encoder-Heretic-GGUF",
+        "qwen3vl_8b_heretic-Q4_K_M.gguf",
+    )
+    mmproj = hf_file(
+        "pottokao/Qwen-Image-2.1-Text-Encoder-Heretic-GGUF",
+        "mmproj-qwen3vl_8b_heretic-f16.gguf",
+    )
+    dit = hf_file(
+        "abenzerps/Qwen-Image-2.1-Uncensored-GGUF",
+        "qwen-image-2.1-UC-Q4_K_M.gguf",
+    )
+    vae = hf_file(
+        "abenzerps/Qwen-Image-2.1-Uncensored-GGUF",
+        "vae/qwen_image_2.1_vae_bf16.safetensors",
+    )
+
+    aspects = {
+        "1:1": (1024, 1024),
+        "4:3": (1152, 896),
+        "3:4": (896, 1152),
+        "16:9": (1344, 768),
+        "9:16": (768, 1344),
+    }
+    width, height = aspects.get(CONFIG.get("aspect", "1:1"), (1024, 1024))
+    seed = int(CONFIG.get("seed", -1))
+    if seed < 0:
+        seed = random.randint(1, 2_000_000_000)
+
+    out = OUT / "edited_image.png"
+    cmd = [
+        str(sdcli),
+        "--diffusion-model", str(dit),
+        "--vae", str(vae),
+        "--llm", str(heretic),
+        "--llm_vision", str(mmproj),
+        "-r", str(source),
+        "-p", CONFIG.get("prompt", ""),
+        "--negative-prompt", CONFIG.get("negative_prompt", ""),
+        "--cfg-scale", str(float(CONFIG.get("cfg", 1.0))),
+        "--sampling-method", "euler",
+        "--steps", str(int(CONFIG.get("steps", 25))),
+        "--seed", str(seed),
+        "-W", str(width),
+        "-H", str(height),
+        "--offload-to-cpu",
+        "--diffusion-fa",
+        "-o", str(out),
+    ]
+    env = os.environ.copy()
+    bindir = str(sdcli.parent)
+    env["LD_LIBRARY_PATH"] = bindir + (":" + env["LD_LIBRARY_PATH"] if env.get("LD_LIBRARY_PATH") else "")
+    p = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=10800)
+    if p.returncode != 0 or not out.exists():
+        raise RuntimeError(((p.stdout or "") + "\n" + (p.stderr or ""))[-7000:])
+    write_result("done", task="image_edit", seed=seed, files=[out.name])
 
 def run_video_faceswap():
     source_name = CONFIG.get("source_image")
@@ -261,6 +328,8 @@ def main():
     try:
         if task == "image":
             run_image()
+        elif task == "image_edit":
+            run_image_edit()
         elif task == "video_faceswap":
             run_video_faceswap()
         else:
