@@ -91,7 +91,7 @@ def _refresh_jobs():
 def _copy_latest_to_edit():
     return latest_image()
 
-with gr.Blocks(title=UI_TITLE, theme=gr.themes.Soft(primary_hue='violet', neutral_hue='slate'), css=CUSTOM_CSS) as demo:
+with gr.Blocks(title=UI_TITLE) as demo:
     gr.HTML(f'<div id="hero"><h1>{UI_TITLE}</h1><p>{UI_SUBTITLE}</p></div>')
 
     with gr.Row(equal_height=True):
