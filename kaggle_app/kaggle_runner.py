@@ -135,6 +135,24 @@ class KaggleController:
             + (" et sauvegardés dans le stockage privé configuré." if persist else ".")
         )
 
+    def _persist_input(self, job_id: str, source: str | None, stem: str) -> str:
+        if not source:
+            return ""
+        src = Path(source)
+        if not src.exists() or not src.is_file():
+            raise FileNotFoundError(f"Fichier uploadé introuvable: {src}")
+        dest_dir = self.settings.storage_root / "_inputs" / job_id
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        suffix = src.suffix.lower()
+        dest = dest_dir / f"{stem}{suffix}"
+        shutil.copy2(src, dest)
+        return str(dest)
+
+    def _cleanup_inputs(self, job_id: str) -> None:
+        if self.settings.keep_job_inputs:
+            return
+        shutil.rmtree(self.settings.storage_root / "_inputs" / job_id, ignore_errors=True)
+
     def submit(
         self,
         task: str,
@@ -155,14 +173,16 @@ class KaggleController:
             raise ValueError("video_faceswap requiert un visage source et une vidéo cible.")
 
         job_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
+        persisted_source = self._persist_input(job_id, source_image, "source_image")
+        persisted_video = self._persist_input(job_id, target_video, "target_video")
         meta = {
             "negative_prompt": negative_prompt or "",
             "steps": int(steps),
             "cfg": float(cfg),
             "seed": int(seed),
             "aspect": aspect,
-            "source_image": source_image or "",
-            "target_video": target_video or "",
+            "source_image": persisted_source,
+            "target_video": persisted_video,
         }
         self.db.create_job(job_id, task, prompt or "", meta)
         with self._lock:
@@ -362,6 +382,7 @@ class KaggleController:
                 if not artifacts:
                     raise RuntimeError("Le kernel Kaggle s'est terminé sans produire de fichier.")
                 self.db.update_job(job_id, status="done")
+                self._cleanup_inputs(job_id)
         except Exception as exc:
             self.db.update_job(job_id, status="error", error=f"{type(exc).__name__}: {exc}")
         finally:
