@@ -115,7 +115,6 @@ class KaggleController:
                 self._cleanup_inputs(job_id)
         except JobCancelled:
             self.db.update_job(job_id, status="cancelled", error="")
-            self._cleanup_inputs(job_id)
         except Exception as exc:
             if self.is_cancelled(job_id):
                 self.db.update_job(job_id, status="cancelled", error="")
@@ -257,8 +256,7 @@ class KaggleController:
         self.db.update_job(job_id, status="cancel_requested")
         if cancelled_before_start:
             self.db.update_job(job_id, status="cancelled")
-            self._cleanup_inputs(job_id)
-            return "Job annulé avant son démarrage."
+            return "Job annulé avant son démarrage. Les entrées sont conservées pour une éventuelle relance."
 
         kernel_ref = job.get("kernel_ref") or ""
         meta = job.get("meta") or {}
@@ -537,11 +535,9 @@ class KaggleController:
                 self._cleanup_inputs(job_id)
         except JobCancelled:
             self.db.update_job(job_id, status="cancelled", error="")
-            self._cleanup_inputs(job_id)
         except Exception as exc:
             if self.is_cancelled(job_id):
                 self.db.update_job(job_id, status="cancelled", error="")
-                self._cleanup_inputs(job_id)
             else:
                 self.db.update_job(job_id, status="error", error=f"{type(exc).__name__}: {exc}")
         finally:
