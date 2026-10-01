@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tarfile
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 WORK = Path("/kaggle/working")
@@ -79,6 +80,17 @@ def sdcli_works(path: Path) -> bool:
         return False
 
 def compile_sdcli() -> Path:
+    if shutil.which("cmake") is None or shutil.which("ninja") is None:
+        subprocess.run(
+            ["apt-get", "-qq", "update"],
+            check=True,
+            timeout=600,
+        )
+        subprocess.run(
+            ["apt-get", "-qq", "install", "-y", "--no-install-recommends", "cmake", "ninja-build"],
+            check=True,
+            timeout=900,
+        )
     src = WORK / "stable-diffusion.cpp"
     if not src.exists():
         subprocess.run(
@@ -154,20 +166,40 @@ def hf_file(repo_id: str, filename: str) -> Path:
     from huggingface_hub import hf_hub_download
     return Path(hf_hub_download(repo_id=repo_id, filename=filename))
 
+def load_qwen_models(include_vision: bool = False) -> dict[str, Path]:
+    specs = {
+        "heretic": (
+            "pottokao/Qwen-Image-2.1-Text-Encoder-Heretic-GGUF",
+            "qwen3vl_8b_heretic-Q4_K_M.gguf",
+        ),
+        "dit": (
+            "abenzerps/Qwen-Image-2.1-Uncensored-GGUF",
+            "qwen-image-2.1-UC-Q4_K_M.gguf",
+        ),
+        "vae": (
+            "abenzerps/Qwen-Image-2.1-Uncensored-GGUF",
+            "vae/qwen_image_2.1_vae_bf16.safetensors",
+        ),
+    }
+    if include_vision:
+        specs["mmproj"] = (
+            "pottokao/Qwen-Image-2.1-Text-Encoder-Heretic-GGUF",
+            "mmproj-qwen3vl_8b_heretic-f16.gguf",
+        )
+
+    def fetch(item):
+        key, (repo_id, filename) = item
+        return key, hf_file(repo_id, filename)
+
+    with ThreadPoolExecutor(max_workers=min(4, len(specs))) as pool:
+        return dict(pool.map(fetch, specs.items()))
+
 def run_image():
     sdcli = ensure_sdcli()
-    heretic = hf_file(
-        "pottokao/Qwen-Image-2.1-Text-Encoder-Heretic-GGUF",
-        "qwen3vl_8b_heretic-Q4_K_M.gguf",
-    )
-    dit = hf_file(
-        "abenzerps/Qwen-Image-2.1-Uncensored-GGUF",
-        "qwen-image-2.1-UC-Q4_K_M.gguf",
-    )
-    vae = hf_file(
-        "abenzerps/Qwen-Image-2.1-Uncensored-GGUF",
-        "vae/qwen_image_2.1_vae_bf16.safetensors",
-    )
+    models = load_qwen_models(include_vision=False)
+    heretic = models["heretic"]
+    dit = models["dit"]
+    vae = models["vae"]
 
     aspects = {
         "1:1": (1024, 1024),
@@ -216,22 +248,11 @@ def run_image_edit():
     if not source.exists():
         raise FileNotFoundError(f"Image source absente: {source_name}")
 
-    heretic = hf_file(
-        "pottokao/Qwen-Image-2.1-Text-Encoder-Heretic-GGUF",
-        "qwen3vl_8b_heretic-Q4_K_M.gguf",
-    )
-    mmproj = hf_file(
-        "pottokao/Qwen-Image-2.1-Text-Encoder-Heretic-GGUF",
-        "mmproj-qwen3vl_8b_heretic-f16.gguf",
-    )
-    dit = hf_file(
-        "abenzerps/Qwen-Image-2.1-Uncensored-GGUF",
-        "qwen-image-2.1-UC-Q4_K_M.gguf",
-    )
-    vae = hf_file(
-        "abenzerps/Qwen-Image-2.1-Uncensored-GGUF",
-        "vae/qwen_image_2.1_vae_bf16.safetensors",
-    )
+    models = load_qwen_models(include_vision=True)
+    heretic = models["heretic"]
+    mmproj = models["mmproj"]
+    dit = models["dit"]
+    vae = models["vae"]
 
     aspects = {
         "1:1": (1024, 1024),
