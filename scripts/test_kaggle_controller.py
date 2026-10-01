@@ -124,7 +124,17 @@ with tempfile.TemporaryDirectory() as td:
     assert persisted.read_bytes() == uploaded.read_bytes()
     uploaded.unlink()
     assert persisted.exists(), "persisted upload disappeared with temporary source"
+    controller.db.create_job(
+        "job-upload",
+        "image_edit",
+        "edit",
+        {"source_image": str(persisted)},
+    )
     controller._cleanup_inputs("job-upload")
+    assert persisted.exists(), "shared canonical input was deleted by ordinary cleanup"
+    controller.db.delete_job("job-upload")
+    removed, _ = controller._gc_input_store()
+    assert removed == 1
     assert not persisted.exists()
     controller.executor.shutdown(wait=False)
 
@@ -459,8 +469,8 @@ with tempfile.TemporaryDirectory() as td:
     controller.db.update_job("retry-source", status="done")
     controller._cleanup_inputs("retry-source")
     assert persisted.exists(), "source-backed completed job lost retry input"
-    controller._cleanup_inputs("retry-source", force=True)
-    assert not persisted.exists()
+    controller.delete_local_job("retry-source")
+    assert not persisted.exists(), "unreferenced canonical input was not garbage-collected"
     controller.executor.shutdown(wait=False)
 
 print("Source-backed retry retention validation passed.")
@@ -1032,3 +1042,47 @@ with tempfile.TemporaryDirectory() as td:
     controller.executor.shutdown(wait=False)
 
 print("Source-free execute skips dataset validation passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root,
+        storage_root=tmp / "media",
+        db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local",
+        worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1,
+        cli_retries=1,
+        kernel_timeout=60,
+        accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False,
+        keep_job_inputs=False,
+        keep_source_inputs_for_retry=True,
+        share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    upload1 = tmp / "video-a.mp4"
+    upload2 = tmp / "video-b.mp4"
+    payload = b"same-large-video-content" * 100
+    upload1.write_bytes(payload)
+    upload2.write_bytes(payload)
+
+    p1 = Path(controller._persist_input("shared-1", str(upload1), "target_video"))
+    p2 = Path(controller._persist_input("shared-2", str(upload2), "target_video"))
+    assert p1 == p2
+    assert p1.parent.name == "_input_store"
+    assert len(list(p1.parent.iterdir())) == 1
+
+    controller.db.create_job("shared-1", "video_faceswap", "", {"target_video": str(p1)})
+    controller.db.create_job("shared-2", "video_faceswap", "", {"target_video": str(p2)})
+    controller.db.update_job("shared-1", status="done")
+    controller.db.update_job("shared-2", status="done")
+
+    controller.delete_local_job("shared-1")
+    assert p1.exists(), "shared source deleted while another job still references it"
+    controller.delete_local_job("shared-2")
+    assert not p1.exists(), "last shared source reference did not trigger GC"
+    controller.executor.shutdown(wait=False)
+
+print("Content-addressed input deduplication validation passed.")
