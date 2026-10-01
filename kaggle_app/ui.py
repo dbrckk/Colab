@@ -245,7 +245,7 @@ def build_ui():
                 )
             with gr.Row():
                 job_status_filter = gr.Dropdown(
-                    ["Tous","queued","preparing","uploading_inputs","submitting","running","recovering","downloading","done","error","cancelled","interrupted"],
+                    ["Tous","queued","waiting_auth","preparing","uploading_inputs","submitting","running","recovering","downloading","done","error","cancelled","interrupted"],
                     value="Tous",
                     label="Statut",
                 )
