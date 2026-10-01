@@ -556,6 +556,54 @@ class KaggleController:
             with self._lock:
                 self._cancelled.discard(job_id)
 
+    def health_check(self) -> str:
+        lines = []
+        try:
+            exe = self.ensure_cli()
+            raw = version("kaggle")
+            lines.append(f"✅ Kaggle CLI {raw} — {exe}")
+        except Exception as exc:
+            lines.append(f"❌ Kaggle CLI: {type(exc).__name__}: {exc}")
+
+        try:
+            probe = self.settings.storage_root / ".write_test"
+            probe.parent.mkdir(parents=True, exist_ok=True)
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink(missing_ok=True)
+            lines.append(f"✅ Stockage accessible — {self.settings.storage_root}")
+        except Exception as exc:
+            lines.append(f"❌ Stockage: {type(exc).__name__}: {exc}")
+
+        try:
+            with self.db._conn() as con:
+                con.execute("SELECT 1").fetchone()
+            lines.append(f"✅ SQLite accessible — {self.settings.db_path}")
+        except Exception as exc:
+            lines.append(f"❌ SQLite: {type(exc).__name__}: {exc}")
+
+        if not self.credentials_ready():
+            lines.append("⚠️ Kaggle non authentifié.")
+        else:
+            try:
+                self._run(["kernels", "list", "-m", "-p", "1"], timeout=120)
+                lines.append("✅ Authentification Kaggle valide.")
+            except Exception as exc:
+                lines.append(f"❌ Authentification Kaggle: {type(exc).__name__}: {exc}")
+
+        return "\n".join(lines)
+
+    def remote_logs(self, job_id: str) -> str:
+        job = self.db.get_job(job_id)
+        if not job:
+            return "Job introuvable."
+        kernel_ref = job.get("kernel_ref") or ""
+        if not kernel_ref:
+            return "Ce job n'a pas encore de kernel Kaggle."
+        try:
+            return self._run(["kernels", "logs", kernel_ref], timeout=180)[-12000:]
+        except Exception as exc:
+            return f"Logs indisponibles: {type(exc).__name__}: {exc}"
+
     def queue_position(self, job_id: str) -> int | None:
         active = {
             "preparing", "uploading_inputs", "submitting",
