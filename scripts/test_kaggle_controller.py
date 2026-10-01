@@ -825,3 +825,39 @@ with tempfile.TemporaryDirectory() as td:
     controller.executor.shutdown(wait=False)
 
 print("Safe storage cleanup validation passed.")
+
+
+from kaggle_app.storage import scan_outputs
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    download = tmp / "download"
+    download.mkdir()
+    (download / "result.json").write_text('{"status":"done","files":["image.png"]}', encoding="utf-8")
+    (download / "image.png").write_bytes(base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
+    ))
+    staged = scan_outputs(download)
+    assert {kind for _, kind in staged} == {"file", "image"}
+
+    settings = Settings(
+        root=repo_root,
+        storage_root=tmp / "media",
+        db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local",
+        worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1,
+        cli_retries=1,
+        kernel_timeout=60,
+        accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False,
+        keep_job_inputs=False,
+        keep_source_inputs_for_retry=True,
+        share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    controller._validate_downloaded_outputs({"task":"image"}, staged)
+    assert not settings.storage_root.joinpath("precheck").exists()
+    controller.executor.shutdown(wait=False)
+
+print("Pre-persistence validation flow passed.")
