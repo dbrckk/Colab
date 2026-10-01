@@ -260,6 +260,7 @@ for token in [
     "def run_image_edit()",
     "def run_video_faceswap()",
     "def load_qwen_models(",
+    "WORKER_VERSION = \"1.2\"",
     "--negative-prompt",
     "--llm_vision",
 ]:
@@ -579,10 +580,11 @@ with tempfile.TemporaryDirectory() as td:
     image.write_bytes(b"image-data")
     video.write_bytes(b"video-data")
 
-    controller._validate_downloaded_outputs(
+    manifest = controller._validate_downloaded_outputs(
         {"task": "image"},
         [(result_json, "file"), (image, "image")],
     )
+    assert manifest["status"] == "done"
     controller._validate_downloaded_outputs(
         {"task": "video_faceswap"},
         [(result_json, "file"), (video, "video")],
