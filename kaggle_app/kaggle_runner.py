@@ -82,7 +82,7 @@ class KaggleController:
         self,
         job: dict[str, Any],
         artifacts: list[tuple[Path, str]],
-    ) -> None:
+    ) -> dict[str, Any]:
         if not artifacts:
             raise RuntimeError("Le kernel Kaggle s'est terminé sans produire de fichier.")
 
@@ -92,6 +92,7 @@ class KaggleController:
             "video_faceswap": "video",
         }.get(job.get("task"))
 
+        data: dict[str, Any] = {}
         manifests = [path for path, kind in artifacts if path.name == "result.json"]
         if manifests:
             try:
@@ -113,6 +114,7 @@ class KaggleController:
                 raise RuntimeError(
                     f"Le job {job.get('task')} est terminé sans média {expected_kind} valide."
                 )
+        return data
 
     def _recover_remote_job(self, job_id: str) -> None:
         job = self.db.get_job(job_id)
@@ -161,7 +163,14 @@ class KaggleController:
                     timeout=900,
                 )
                 artifacts = import_outputs(job_id, download, self.settings.storage_root)
-                self._validate_downloaded_outputs(job, artifacts)
+                result_manifest = self._validate_downloaded_outputs(job, artifacts)
+                current = self.db.get_job(job_id) or job
+                current_meta = current.get("meta") or {}
+                if result_manifest:
+                    self.db.update_job(
+                        job_id,
+                        meta_json={**current_meta, "result_manifest": result_manifest},
+                    )
                 existing = {a["path"] for a in self.db.artifacts(job_id)}
                 for path, kind in artifacts:
                     if str(path) not in existing:
@@ -682,7 +691,14 @@ class KaggleController:
                 )
 
                 artifacts = import_outputs(job_id, download, self.settings.storage_root)
-                self._validate_downloaded_outputs(job, artifacts)
+                result_manifest = self._validate_downloaded_outputs(job, artifacts)
+                current = self.db.get_job(job_id) or job
+                current_meta = current.get("meta") or {}
+                if result_manifest:
+                    self.db.update_job(
+                        job_id,
+                        meta_json={**current_meta, "result_manifest": result_manifest},
+                    )
                 for path, kind in artifacts:
                     self.db.add_artifact(job_id, str(path), kind)
                 self.db.update_job(job_id, status="done")
