@@ -22,6 +22,13 @@ def _sha1(path: Path) -> str:
             h.update(chunk)
     return h.hexdigest()
 
+def scan_outputs(source_dir: Path) -> list[tuple[Path, str]]:
+    items: list[tuple[Path, str]] = []
+    for src in sorted(source_dir.rglob("*")):
+        if src.is_file() and not src.name.startswith("."):
+            items.append((src, kind_for(src)))
+    return items
+
 def import_outputs(job_id: str, source_dir: Path, storage_root: Path) -> list[tuple[Path, str]]:
     dest = storage_root / job_id
     dest.mkdir(parents=True, exist_ok=True)
