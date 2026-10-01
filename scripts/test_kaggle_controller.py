@@ -250,3 +250,18 @@ with tempfile.TemporaryDirectory() as td:
     controller.executor.shutdown(wait=False)
 
 print("Retry and delete validation passed.")
+
+
+worker_path = repo_root / "kaggle_worker" / "worker.py"
+worker_source = worker_path.read_text(encoding="utf-8")
+compile(worker_source, str(worker_path), "exec")
+for token in [
+    "def run_image()",
+    "def run_image_edit()",
+    "def run_video_faceswap()",
+    "def load_qwen_models(",
+    "--negative-prompt",
+    "--llm_vision",
+]:
+    assert token in worker_source, f"Missing worker capability: {token}"
+print("Kaggle worker syntax validation passed.")
