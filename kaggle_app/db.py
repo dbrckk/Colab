@@ -153,3 +153,8 @@ class JobDB:
         with _LOCK, self._conn() as con:
             rows = con.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
+
+
+    def vacuum(self) -> None:
+        with _LOCK, self._conn() as con:
+            con.execute("VACUUM")
