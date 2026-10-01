@@ -1100,3 +1100,15 @@ assert 'batch_backend = "sd-server"' in worker_source
 assert 'batch_backend = "sd-cli"' in worker_source
 assert "server_process.terminate()" in worker_source
 print("Batch server API wiring validation passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    db = JobDB(tmp / "jobs.sqlite3")
+    db.create_job("meta-list", "image_edit", "x", {"source_image": "/tmp/example.png", "steps": 33})
+    rows = db.list_jobs(10)
+    row = next(j for j in rows if j["id"] == "meta-list")
+    assert row["meta"]["source_image"] == "/tmp/example.png"
+    assert row["meta"]["steps"] == 33
+
+print("list_jobs metadata decoding validation passed.")
