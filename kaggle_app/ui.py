@@ -94,6 +94,12 @@ def _retry_job(job_id):
     except Exception as e:
         raise gr.Error(str(e))
 
+def _export_job(job_id):
+    try:
+        return controller.export_job_archive(job_id)
+    except Exception as e:
+        raise gr.Error(str(e))
+
 def _delete_job(job_id):
     try:
         msg = controller.delete_local_job(job_id)
@@ -204,12 +210,14 @@ def build_ui():
                 open_job = gr.Button("Ouvrir le job", variant="primary")
                 retry_job_btn = gr.Button("↻ Relancer le job")
                 logs_btn = gr.Button("📜 Logs Kaggle")
+                export_job_btn = gr.Button("📦 Export ZIP")
                 delete_job_btn = gr.Button("🗑 Supprimer localement", variant="stop")
             lib_status = gr.Textbox(label="État", lines=5, interactive=False)
             lib_logs = gr.Textbox(label="Logs Kaggle", lines=12, interactive=False, visible=True)
             lib_gallery = gr.Gallery(label="Images", columns=3)
             lib_video = gr.Video(label="Vidéo")
             lib_files = gr.Files(label="Fichiers")
+            lib_export = gr.File(label="Archive du job")
 
         with gr.Tab("⚙️ Paramètres Kaggle"):
             ready = "✅ Kaggle prêt" if controller.credentials_ready() else "❌ Kaggle non configuré"
@@ -247,6 +255,7 @@ def build_ui():
         open_job.click(_refresh, [lookup], [lib_status, lib_gallery, lib_video, lib_files, jobs])
         retry_job_btn.click(_retry_job, [lookup], [lookup, lib_status, jobs])
         logs_btn.click(_remote_logs, [lookup], [lib_logs])
+        export_job_btn.click(_export_job, [lookup], [lib_export])
         delete_job_btn.click(_delete_job, [lookup], [lib_status, jobs])
         save.click(
             _save_credentials,
