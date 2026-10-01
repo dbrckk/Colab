@@ -551,3 +551,62 @@ with tempfile.TemporaryDirectory() as td:
         controller.executor.shutdown(wait=False)
 
 print("Kaggle CLI retry execution validation passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root,
+        storage_root=tmp / "media",
+        db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local",
+        worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1,
+        cli_retries=1,
+        kernel_timeout=60,
+        accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False,
+        keep_job_inputs=False,
+        keep_source_inputs_for_retry=True,
+        share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    result_json = tmp / "result.json"
+    image = tmp / "image.png"
+    video = tmp / "video.mp4"
+
+    result_json.write_text('{"status":"done"}', encoding="utf-8")
+    image.write_bytes(b"image-data")
+    video.write_bytes(b"video-data")
+
+    controller._validate_downloaded_outputs(
+        {"task": "image"},
+        [(result_json, "file"), (image, "image")],
+    )
+    controller._validate_downloaded_outputs(
+        {"task": "video_faceswap"},
+        [(result_json, "file"), (video, "video")],
+    )
+
+    try:
+        controller._validate_downloaded_outputs(
+            {"task": "image"},
+            [(result_json, "file")],
+        )
+        raise AssertionError("image job accepted without image output")
+    except RuntimeError:
+        pass
+
+    result_json.write_text('{"status":"error","error":"boom"}', encoding="utf-8")
+    try:
+        controller._validate_downloaded_outputs(
+            {"task": "image"},
+            [(result_json, "file"), (image, "image")],
+        )
+        raise AssertionError("error manifest was accepted")
+    except RuntimeError:
+        pass
+
+    controller.executor.shutdown(wait=False)
+
+print("Downloaded output validation passed.")
