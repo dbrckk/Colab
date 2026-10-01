@@ -23,6 +23,7 @@ class Settings:
     kernel_timeout: int = int(os.getenv("KAGGLE_KERNEL_TIMEOUT", "21600"))
     accelerator: str = os.getenv("KAGGLE_ACCELERATOR", "NvidiaTeslaT4")
     delete_remote_kernel: bool = _bool("KAGGLE_DELETE_REMOTE_KERNEL", True)
+    keep_job_inputs: bool = _bool("QWEN_KEEP_JOB_INPUTS", False)
     share_gradio: bool = _bool("QWEN_KAGGLE_SHARE", True)
 
     @property
