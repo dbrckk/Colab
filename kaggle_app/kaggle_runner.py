@@ -556,6 +556,37 @@ class KaggleController:
             with self._lock:
                 self._cancelled.discard(job_id)
 
+    def retry(self, job_id: str) -> str:
+        old = self.db.get_job(job_id)
+        if not old:
+            raise ValueError("Job introuvable.")
+        if old.get("status") in {"queued", "running", "submitting", "recovering", "downloading"}:
+            raise RuntimeError("Ce job est encore actif.")
+
+        meta = old.get("meta") or {}
+        return self.submit(
+            old.get("task") or "image",
+            old.get("prompt") or "",
+            meta.get("negative_prompt", ""),
+            meta.get("steps", 25),
+            meta.get("cfg", 1.0),
+            meta.get("seed", -1),
+            meta.get("aspect", "1:1"),
+            source_image=meta.get("source_image") or None,
+            target_video=meta.get("target_video") or None,
+        )
+
+    def delete_local_job(self, job_id: str) -> str:
+        job = self.db.get_job(job_id)
+        if not job:
+            return "Job introuvable."
+        if job.get("status") in {"queued", "running", "submitting", "recovering", "downloading", "cancel_requested"}:
+            raise RuntimeError("Annule d'abord le job actif.")
+        shutil.rmtree(self.settings.storage_root / job_id, ignore_errors=True)
+        shutil.rmtree(self.settings.storage_root / "_inputs" / job_id, ignore_errors=True)
+        self.db.delete_job(job_id)
+        return f"Job {job_id} supprimé du stockage local."
+
     def job(self, job_id: str):
         return self.db.get_job(job_id)
 
