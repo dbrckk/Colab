@@ -763,3 +763,17 @@ with tempfile.TemporaryDirectory() as td:
             os.environ["KAGGLE_KEY"] = old_key
 
 print("Local queued-job restart validation passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    corrupt = tmp / "corrupt.sqlite3"
+    corrupt.write_bytes(b"this is not a sqlite database")
+    db = JobDB(corrupt)
+    assert db.integrity_status().lower().startswith("ok")
+    assert db.recovered_corrupt_path is not None
+    assert db.recovered_corrupt_path.exists()
+    db.create_job("after-recovery", "image", "ok", {})
+    assert db.get_job("after-recovery") is not None
+
+print("SQLite corruption recovery validation passed.")
