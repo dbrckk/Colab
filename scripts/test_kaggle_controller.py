@@ -47,3 +47,49 @@ assert "QWEN_KAGGLE_DB" in controller_code
 assert "QWEN_KAGGLE_ENV_FILE" in controller_code
 assert "launch_kaggle_ui.py" in controller_code
 print("Kaggle controller notebook validation passed.")
+
+
+import os
+from kaggle_app.config import Settings
+from kaggle_app.kaggle_runner import KaggleController
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    os.environ["KAGGLE_USERNAME"] = "ci-user"
+    settings = Settings(
+        root=repo_root,
+        storage_root=tmp / "media",
+        db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local",
+        worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=5,
+        kernel_timeout=3600,
+        accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=True,
+        share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    folder = tmp / "kernel"
+    folder.mkdir()
+    job = {
+        "id": "ci-job",
+        "task": "image",
+        "prompt": "test prompt",
+        "meta": {"steps": 20, "cfg": 1.0, "seed": 1, "aspect": "1:1"},
+    }
+    ref = controller._prepare_kernel(job, folder, "ci-user/ci-dataset")
+    assert ref == "ci-user/qwen-studio-ci-job"
+    metadata = json.loads((folder / "kernel-metadata.json").read_text(encoding="utf-8"))
+    notebook = json.loads((folder / "job.ipynb").read_text(encoding="utf-8"))
+    assert metadata["kernel_type"] == "notebook"
+    assert metadata["code_file"] == "job.ipynb"
+    assert metadata["is_private"] is True
+    assert metadata["enable_gpu"] is True
+    assert metadata["dataset_sources"] == ["ci-user/ci-dataset"]
+    assert notebook["nbformat"] == 4
+    worker_code = "".join(notebook["cells"][1]["source"])
+    assert "def run_image()" in worker_code
+    assert "def run_video_faceswap()" in worker_code
+    controller.executor.shutdown(wait=False)
+
+print("Generated Kaggle notebook validation passed.")
