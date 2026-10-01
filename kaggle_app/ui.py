@@ -180,9 +180,19 @@ def _load_job_to_form(job_id):
         source = None
     if target and not Path(target).exists():
         target = None
+
+    task_value = j.get("task") or "image"
+    batch_text = ""
+    prompt_value = j.get("prompt") or ""
+    if task_value == "image_batch":
+        prompts = [str(x) for x in (meta.get("prompts") or []) if str(x).strip()]
+        batch_text = "\n".join(prompts)
+        task_value = "image"
+        prompt_value = prompts[0] if prompts else ""
+
     return (
-        j.get("task") or "image",
-        j.get("prompt") or "",
+        task_value,
+        prompt_value,
         meta.get("negative_prompt") or "",
         int(meta.get("steps", 25)),
         float(meta.get("cfg", 1.0)),
@@ -190,8 +200,10 @@ def _load_job_to_form(job_id):
         meta.get("aspect") or "1:1",
         source,
         target,
+        batch_text,
         f"Paramètres du job {job_id} chargés dans le formulaire.",
     )
+
 
 def _retry_job(job_id):
     try:
@@ -418,7 +430,7 @@ def build_ui():
         load_form_btn.click(
             _load_job_to_form,
             [lookup],
-            [task, prompt, negative, steps, cfg, seed, aspect, source, target, submit_info],
+            [task, prompt, negative, steps, cfg, seed, aspect, source, target, batch_prompts, submit_info],
         )
         retry_job_btn.click(_retry_job, [lookup], [lookup, lib_status, jobs])
         logs_btn.click(_remote_logs, [lookup], [lib_logs])
