@@ -12,13 +12,29 @@ controller = KaggleController()
 
 CSS = """
 .gradio-container {max-width: 1180px !important; margin: 0 auto !important; padding-bottom: 48px !important;}
-.hero {padding: 18px; border-radius: 20px; border: 1px solid rgba(127,127,127,.2); margin-bottom: 12px;}
-.primary-action {min-height: 52px !important; font-weight: 700 !important;}
-button {touch-action: manipulation; min-height: 44px !important;}
+.hero {
+  padding: 22px;
+  border-radius: 24px;
+  border: 1px solid rgba(127,127,127,.22);
+  margin-bottom: 12px;
+  background: linear-gradient(135deg, rgba(120,80,255,.10), rgba(30,160,255,.06));
+  box-shadow: 0 12px 34px rgba(0,0,0,.08);
+}
+.hero h1 {margin: 0 0 6px 0 !important; font-size: clamp(26px, 5vw, 42px) !important;}
+.hero p {margin: 0 !important; opacity: .78; font-size: 15px;}
+.panel-card {
+  border: 1px solid rgba(127,127,127,.16) !important;
+  border-radius: 20px !important;
+  padding: 12px !important;
+  box-shadow: 0 8px 26px rgba(0,0,0,.05);
+}
+.primary-action {min-height: 54px !important; font-weight: 750 !important; font-size: 16px !important;}
+button {touch-action: manipulation; min-height: 44px !important; border-radius: 12px !important;}
 textarea, input {font-size: 16px !important;}
 @media (max-width: 720px) {
   .gradio-container {padding-left: 8px !important; padding-right: 8px !important;}
-  .hero {padding: 14px; border-radius: 16px;}
+  .hero {padding: 16px; border-radius: 18px;}
+  .panel-card {padding: 8px !important; border-radius: 16px !important;}
 }
 """
 
@@ -192,14 +208,22 @@ def build_ui():
     with gr.Blocks(title="Qwen Kaggle Studio") as demo:
         gr.HTML(
             "<div class='hero'><h1>Qwen Kaggle Studio</h1>"
-            "<p>Prompt/upload → Kaggle GPU → récupération automatique → bibliothèque locale.</p></div>"
+            "<p>Crée, modifie et traite tes médias sur Kaggle GPU. Les résultats reviennent automatiquement dans ta bibliothèque persistante.</p></div>"
         )
         dashboard = gr.Markdown(_dashboard())
 
         with gr.Tab("✨ Générer"):
             with gr.Row():
-                with gr.Column(scale=5):
-                    task = gr.Dropdown(["image", "image_edit", "video_faceswap"], value="image", label="Tâche")
+                with gr.Column(scale=5, elem_classes=["panel-card"]):
+                    task = gr.Dropdown(
+                        [
+                            ("✨ Créer une image", "image"),
+                            ("✏️ Modifier une image", "image_edit"),
+                            ("🎬 Face swap vidéo", "video_faceswap"),
+                        ],
+                        value="image",
+                        label="Tâche",
+                    )
                     prompt = gr.Textbox(label="Prompt", lines=5, placeholder="Décris l'image à générer…")
                     negative = gr.Textbox(label="Negative prompt", lines=2)
                     with gr.Row():
@@ -228,7 +252,7 @@ def build_ui():
                         batch_submit = gr.Button("Ajouter le lot à la file")
                         batch_ids = gr.Textbox(label="Jobs créés", lines=6, interactive=False)
 
-                with gr.Column(scale=6):
+                with gr.Column(scale=6, elem_classes=["panel-card"]):
                     status = gr.Textbox(label="État", lines=5, interactive=False)
                     with gr.Row():
                         refresh = gr.Button("↻ Actualiser")
