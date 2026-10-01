@@ -31,6 +31,32 @@ def _recent_images(limit=60):
             items.append((path, caption))
     return items
 
+def _filter_jobs(status_filter="Tous", task_filter="Tous", query=""):
+    query = (query or "").strip().lower()
+    rows = []
+    for j in controller.jobs(500):
+        if status_filter and status_filter != "Tous" and j.get("status") != status_filter:
+            continue
+        if task_filter and task_filter != "Tous" and j.get("task") != task_filter:
+            continue
+        haystack = " ".join([
+            str(j.get("id") or ""),
+            str(j.get("prompt") or ""),
+            str(j.get("kernel_ref") or ""),
+            str(j.get("error") or ""),
+        ]).lower()
+        if query and query not in haystack:
+            continue
+        rows.append([
+            j["id"],
+            j["task"],
+            j["status"],
+            j["kernel_ref"],
+            (j["prompt"] or "")[:90],
+            (j["error"] or "")[-180:],
+        ])
+    return rows
+
 def _jobs_table():
     rows = []
     for j in controller.jobs(100):
@@ -197,6 +223,19 @@ def build_ui():
                     columns=4,
                     height=520,
                 )
+            with gr.Row():
+                job_status_filter = gr.Dropdown(
+                    ["Tous","queued","preparing","uploading_inputs","submitting","running","recovering","downloading","done","error","cancelled","interrupted"],
+                    value="Tous",
+                    label="Statut",
+                )
+                job_task_filter = gr.Dropdown(
+                    ["Tous","image","image_edit","video_faceswap"],
+                    value="Tous",
+                    label="Type",
+                )
+                job_search = gr.Textbox(label="Rechercher", placeholder="Prompt, Job ID, erreur…")
+                job_filter_btn = gr.Button("Filtrer")
             jobs = gr.Dataframe(
                 headers=["Job ID", "Type", "État", "Kernel Kaggle", "Prompt", "Erreur"],
                 value=_jobs_table(),
@@ -251,6 +290,11 @@ def build_ui():
         retry.click(_retry_job, [job_id], [job_id, submit_info, jobs])
         cancel.click(_cancel_job, [job_id], [submit_info, jobs])
         reload_jobs.click(_jobs_table, [], [jobs])
+        job_filter_btn.click(
+            _filter_jobs,
+            [job_status_filter, job_task_filter, job_search],
+            [jobs],
+        )
         recent_reload.click(_recent_images, [recent_limit], [recent_gallery])
         open_job.click(_refresh, [lookup], [lib_status, lib_gallery, lib_video, lib_files, jobs])
         retry_job_btn.click(_retry_job, [lookup], [lookup, lib_status, jobs])
