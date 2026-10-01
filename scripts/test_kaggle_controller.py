@@ -46,6 +46,8 @@ assert "drive.mount('/content/drive')" in controller_code
 assert "QWEN_KAGGLE_STORAGE" in controller_code
 assert "QWEN_KAGGLE_DB" in controller_code
 assert "QWEN_KAGGLE_ENV_FILE" in controller_code
+assert "userdata.get" in controller_code
+assert "KAGGLE_API_TOKEN" in controller_code
 assert "launch_kaggle_ui.py" in controller_code
 print("Kaggle controller notebook validation passed.")
 
