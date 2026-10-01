@@ -4,6 +4,7 @@ import os
 import importlib.util
 import subprocess
 import sys
+import secrets
 from pathlib import Path
 
 def load_local_env() -> None:
@@ -40,6 +41,12 @@ from kaggle_app.ui import build_ui, CSS
 
 if __name__ == "__main__":
     demo = build_ui()
+    ui_user = os.getenv("QWEN_UI_USER", "qwen")
+    ui_password = os.getenv("QWEN_UI_PASSWORD") or secrets.token_urlsafe(10)
+    if SETTINGS.share_gradio:
+        print("🔐 Connexion Gradio")
+        print("Utilisateur :", ui_user)
+        print("Mot de passe :", ui_password)
     demo.queue(default_concurrency_limit=8)
     demo.launch(
         share=SETTINGS.share_gradio,
@@ -49,4 +56,5 @@ if __name__ == "__main__":
         allowed_paths=[str(SETTINGS.storage_root)],
         theme=gr.themes.Soft(),
         css=CSS,
+        auth=(ui_user, ui_password) if SETTINGS.share_gradio else None,
     )
