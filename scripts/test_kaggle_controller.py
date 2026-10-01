@@ -493,3 +493,61 @@ with tempfile.TemporaryDirectory() as td:
     controller.executor.shutdown(wait=False)
 
 print("Job ZIP export validation passed.")
+
+
+# Verify safe commands retry transient failures while permanent auth failures stop immediately.
+import kaggle_app.kaggle_runner as runner_mod
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root,
+        storage_root=tmp / "media",
+        db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local",
+        worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1,
+        cli_retries=3,
+        kernel_timeout=60,
+        accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False,
+        keep_job_inputs=False,
+        keep_source_inputs_for_retry=True,
+        share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    controller.ensure_cli = lambda: "kaggle"
+    original_run = runner_mod.subprocess.run
+    original_sleep = runner_mod.time.sleep
+    calls = []
+    class FakeProc:
+        def __init__(self, code, text):
+            self.returncode = code
+            self.stdout = ""
+            self.stderr = text
+    try:
+        seq = [FakeProc(1, "503 Service Unavailable"), FakeProc(0, "ok")]
+        def fake_run(*args, **kwargs):
+            calls.append(args)
+            return seq.pop(0)
+        runner_mod.subprocess.run = fake_run
+        runner_mod.time.sleep = lambda *_: None
+        assert controller._run(["kernels", "status", "x"], retries=3) == "ok"
+        assert len(calls) == 2
+
+        calls.clear()
+        runner_mod.subprocess.run = lambda *args, **kwargs: (
+            calls.append(args) or FakeProc(1, "401 Unauthorized")
+        )
+        try:
+            controller._run(["kernels", "status", "x"], retries=3)
+            raise AssertionError("permanent auth failure was retried/accepted")
+        except RuntimeError:
+            pass
+        assert len(calls) == 1
+    finally:
+        runner_mod.subprocess.run = original_run
+        runner_mod.time.sleep = original_sleep
+        controller.executor.shutdown(wait=False)
+
+print("Kaggle CLI retry execution validation passed.")
