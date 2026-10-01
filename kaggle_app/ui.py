@@ -76,6 +76,12 @@ def _jobs_table():
         ])
     return rows
 
+def _cleanup_storage(days):
+    try:
+        return controller.cleanup_storage(int(days))
+    except Exception as e:
+        return f"{type(e).__name__}: {e}"
+
 def _health_check():
     try:
         return controller.health_check()
@@ -295,6 +301,10 @@ def build_ui():
                 health_btn = gr.Button("🩺 Diagnostic complet")
             save_msg = gr.Textbox(label="Résultat", lines=3, interactive=False)
             health_out = gr.Textbox(label="Diagnostic", lines=8, interactive=False)
+            with gr.Accordion("Entretien du stockage", open=False):
+                cleanup_days = gr.Slider(1, 90, value=14, step=1, label="Supprimer les ZIP d'export plus vieux que N jours")
+                cleanup_btn = gr.Button("🧹 Nettoyage sûr")
+                cleanup_out = gr.Textbox(label="Nettoyage", lines=3, interactive=False)
 
         submit.click(
             _submit,
@@ -327,6 +337,7 @@ def build_ui():
             [save_msg, kaggle_status],
         )
         health_btn.click(_health_check, [], [health_out])
+        cleanup_btn.click(_cleanup_storage, [cleanup_days], [cleanup_out])
 
         try:
             timer = gr.Timer(value=5.0, active=True)
