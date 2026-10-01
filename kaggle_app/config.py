@@ -20,6 +20,7 @@ class Settings:
     env_file: Path = Path(os.getenv("QWEN_KAGGLE_ENV_FILE", ROOT / ".env.local"))
     worker_path: Path = ROOT / "kaggle_worker" / "worker.py"
     poll_seconds: int = int(os.getenv("KAGGLE_POLL_SECONDS", "20"))
+    cli_retries: int = int(os.getenv("KAGGLE_CLI_RETRIES", "3"))
     kernel_timeout: int = int(os.getenv("KAGGLE_KERNEL_TIMEOUT", "21600"))
     accelerator: str = os.getenv("KAGGLE_ACCELERATOR", "NvidiaTeslaT4")
     delete_remote_kernel: bool = _bool("KAGGLE_DELETE_REMOTE_KERNEL", True)
