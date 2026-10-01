@@ -738,6 +738,38 @@ class KaggleController:
             target_video=meta.get("target_video") or None,
         )
 
+    def export_job_archive(self, job_id: str) -> str:
+        job = self.db.get_job(job_id)
+        if not job:
+            raise ValueError("Job introuvable.")
+        artifacts = self.db.artifacts(job_id)
+        export_root = self.settings.storage_root / "_exports"
+        export_root.mkdir(parents=True, exist_ok=True)
+        work = export_root / f".{job_id}-export"
+        shutil.rmtree(work, ignore_errors=True)
+        work.mkdir(parents=True, exist_ok=True)
+        try:
+            manifest = {
+                "job": job,
+                "artifacts": artifacts,
+                "exported_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            (work / "job.json").write_text(
+                json.dumps(manifest, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            media_dir = work / "media"
+            media_dir.mkdir()
+            for artifact in artifacts:
+                src = Path(artifact.get("path") or "")
+                if src.exists() and src.is_file():
+                    shutil.copy2(src, media_dir / src.name)
+            archive_base = export_root / job_id
+            archive_path = shutil.make_archive(str(archive_base), "zip", root_dir=work)
+            return archive_path
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+
     def delete_local_job(self, job_id: str) -> str:
         job = self.db.get_job(job_id)
         if not job:
@@ -746,6 +778,10 @@ class KaggleController:
             raise RuntimeError("Annule d'abord le job actif.")
         shutil.rmtree(self.settings.storage_root / job_id, ignore_errors=True)
         self._cleanup_inputs(job_id, force=True)
+        try:
+            os.remove(self.settings.storage_root / "_exports" / f"{job_id}.zip")
+        except OSError:
+            pass
         self.db.delete_job(job_id)
         return f"Job {job_id} supprimé du stockage local."
 
