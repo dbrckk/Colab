@@ -22,6 +22,22 @@ from .storage import import_outputs
 TERMINAL_OK = ("complete", "completed")
 TERMINAL_BAD = ("error", "failed", "cancelled", "canceled")
 
+def _is_transient_cli_error(text: str) -> bool:
+    low = (text or "").lower()
+    transient = (
+        "timed out", "timeout", "temporarily unavailable", "connection reset",
+        "connection aborted", "connection refused", "remote disconnected",
+        "server error", "bad gateway", "gateway timeout", "service unavailable",
+        "too many requests", "rate limit", "429", "500", "502", "503", "504",
+    )
+    permanent = (
+        "401", "403", "unauthorized", "forbidden", "invalid token",
+        "authentication", "usage:", "unrecognized arguments", "invalid choice",
+    )
+    if any(token in low for token in permanent):
+        return False
+    return any(token in low for token in transient)
+
 class JobCancelled(RuntimeError):
     pass
 
@@ -49,11 +65,15 @@ class KaggleController:
             status = row.get("status")
             kernel_ref = row.get("kernel_ref") or ""
             if status in interrupted:
+                meta = row.get("meta") or {}
+                dataset_ref = meta.get("dataset_ref") or ""
                 self.db.update_job(
                     job_id,
                     status="interrupted",
                     error="Le contrôleur s'est arrêté avant la création complète du kernel Kaggle. Relance ce job.",
                 )
+                if dataset_ref:
+                    self.executor.submit(self._cleanup_remote_refs, "", dataset_ref)
             elif status in recoverable and kernel_ref:
                 with self._lock:
                     self._futures[job_id] = self.executor.submit(self._recover_remote_job, job_id)
@@ -125,16 +145,7 @@ class KaggleController:
                     error=f"Recovery {type(exc).__name__}: {exc}",
                 )
         finally:
-            if kernel_ref and self.settings.delete_remote_kernel:
-                try:
-                    self._run(["kernels", "delete", kernel_ref, "-y"], timeout=180)
-                except Exception:
-                    pass
-            if dataset_ref and self.settings.delete_remote_kernel:
-                try:
-                    self._run(["datasets", "delete", dataset_ref, "-y"], timeout=180)
-                except Exception:
-                    pass
+            self._cleanup_remote_refs(kernel_ref, dataset_ref)
             with self._lock:
                 self._cancelled.discard(job_id)
 
@@ -182,17 +193,33 @@ class KaggleController:
 
     def _run(self, args: list[str], timeout: int | None = None) -> str:
         exe = self.ensure_cli()
-        p = subprocess.run(
-            [exe, *args],
-            capture_output=True,
-            text=True,
-            env=self._env(),
-            timeout=timeout,
-        )
-        output = ((p.stdout or "") + "\n" + (p.stderr or "")).strip()
-        if p.returncode != 0:
-            raise RuntimeError(output[-7000:] or f"Kaggle CLI exit={p.returncode}")
-        return output
+        attempts = max(1, int(self.settings.cli_retries))
+        last_output = ""
+        for attempt in range(1, attempts + 1):
+            try:
+                p = subprocess.run(
+                    [exe, *args],
+                    capture_output=True,
+                    text=True,
+                    env=self._env(),
+                    timeout=timeout,
+                )
+                output = ((p.stdout or "") + "\n" + (p.stderr or "")).strip()
+                last_output = output
+                if p.returncode == 0:
+                    return output
+                if attempt >= attempts or not _is_transient_cli_error(output):
+                    raise RuntimeError(output[-7000:] or f"Kaggle CLI exit={p.returncode}")
+            except subprocess.TimeoutExpired as exc:
+                last_output = f"Kaggle CLI timeout: {exc}"
+                if attempt >= attempts:
+                    raise RuntimeError(last_output) from exc
+
+            # 2s, 4s, 8s... capped to avoid freezing the controller too long.
+            time.sleep(min(12, 2 ** attempt))
+
+        raise RuntimeError(last_output[-7000:] or "Échec Kaggle CLI après plusieurs tentatives.")
+
 
     def save_credentials(
         self,
@@ -333,10 +360,27 @@ class KaggleController:
             self._futures[job_id] = self.executor.submit(self._execute, job_id)
         return job_id
 
-    def _prepare_dataset(self, job: dict[str, Any], folder: Path) -> str:
+    def _dataset_ref(self, job: dict[str, Any]) -> str:
         username = self.settings.kaggle_username
         dataset_slug = slugify(f"qwen-input-{job['id']}")
-        dataset_ref = f"{username}/{dataset_slug}"
+        return f"{username}/{dataset_slug}"
+
+    def _cleanup_remote_refs(self, kernel_ref: str = "", dataset_ref: str = "") -> None:
+        if not self.settings.delete_remote_kernel:
+            return
+        if kernel_ref:
+            try:
+                self._run(["kernels", "delete", kernel_ref, "-y"], timeout=180)
+            except Exception:
+                pass
+        if dataset_ref:
+            try:
+                self._run(["datasets", "delete", dataset_ref, "-y"], timeout=180)
+            except Exception:
+                pass
+
+    def _prepare_dataset(self, job: dict[str, Any], folder: Path, dataset_ref: str | None = None) -> str:
+        dataset_ref = dataset_ref or self._dataset_ref(job)
         config = {
             "job_id": job["id"],
             "task": job["task"],
@@ -469,8 +513,13 @@ class KaggleController:
                 kernel_dir.mkdir()
 
                 self._check_cancelled(job_id)
-                self.db.update_job(job_id, status="uploading_inputs")
-                dataset_ref = self._prepare_dataset(job, dataset_dir)
+                dataset_ref = self._dataset_ref(job)
+                self.db.update_job(
+                    job_id,
+                    status="uploading_inputs",
+                    meta_json={**job.get("meta", {}), "dataset_ref": dataset_ref},
+                )
+                dataset_ref = self._prepare_dataset(job, dataset_dir, dataset_ref)
                 self._check_cancelled(job_id)
 
                 kernel_ref = self._prepare_kernel(job, kernel_dir, dataset_ref)
