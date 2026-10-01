@@ -721,3 +721,45 @@ with tempfile.TemporaryDirectory() as td:
     controller.executor.shutdown(wait=False)
 
 print("Media integrity validation passed.")
+
+
+# Local queued jobs survive controller restart and wait for auth when needed.
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root,
+        storage_root=tmp / "media",
+        db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local",
+        worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1,
+        cli_retries=1,
+        kernel_timeout=60,
+        accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False,
+        keep_job_inputs=False,
+        keep_source_inputs_for_retry=True,
+        share_gradio=False,
+    )
+
+    old_user = os.environ.pop("KAGGLE_USERNAME", None)
+    old_token = os.environ.pop("KAGGLE_API_TOKEN", None)
+    old_key = os.environ.pop("KAGGLE_KEY", None)
+    try:
+        first = KaggleController(settings)
+        first.db.create_job("local-queued", "image", "hello", {})
+        first.db.update_job("local-queued", status="queued")
+        first.executor.shutdown(wait=False)
+
+        second = KaggleController(settings)
+        assert second.db.get_job("local-queued")["status"] == "waiting_auth"
+        second.executor.shutdown(wait=False)
+    finally:
+        if old_user is not None:
+            os.environ["KAGGLE_USERNAME"] = old_user
+        if old_token is not None:
+            os.environ["KAGGLE_API_TOKEN"] = old_token
+        if old_key is not None:
+            os.environ["KAGGLE_KEY"] = old_key
+
+print("Local queued-job restart validation passed.")
