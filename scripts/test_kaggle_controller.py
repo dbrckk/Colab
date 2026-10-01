@@ -673,7 +673,7 @@ with tempfile.TemporaryDirectory() as td:
                 encoding="utf-8",
             )
             (out_dir / "image.png").write_bytes(base64.b64decode(
-                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZcR8AAAAASUVORK5CYII="
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
             ))
         return "ok"
 
@@ -712,7 +712,7 @@ with tempfile.TemporaryDirectory() as td:
     controller = KaggleController(settings)
     valid_png = tmp / "valid.png"
     valid_png.write_bytes(base64.b64decode(
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZcR8AAAAASUVORK5CYII="
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
     ))
     invalid_png = tmp / "invalid.png"
     invalid_png.write_bytes(b"not-an-image")
