@@ -38,6 +38,13 @@ textarea, input {font-size: 16px !important;}
 }
 """
 
+def _task_help(task):
+    return {
+        "image": "✨ **Création d’image** — écris un prompt. Aucun fichier source requis.",
+        "image_edit": "✏️ **Modification d’image** — ajoute une image source et décris précisément le changement.",
+        "video_faceswap": "🎬 **Face swap vidéo** — ajoute un visage source et une vidéo cible. Le prompt peut rester vide.",
+    }.get(task, "")
+
 def _dashboard():
     try:
         return controller.dashboard_summary()
@@ -153,6 +160,30 @@ def _submit(task, prompt, negative, steps, cfg, seed, aspect, source, target):
     except Exception as e:
         raise gr.Error(str(e))
 
+def _load_job_to_form(job_id):
+    j = controller.job(job_id)
+    if not j:
+        raise gr.Error("Job introuvable.")
+    meta = j.get("meta") or {}
+    source = meta.get("source_image") or None
+    target = meta.get("target_video") or None
+    if source and not Path(source).exists():
+        source = None
+    if target and not Path(target).exists():
+        target = None
+    return (
+        j.get("task") or "image",
+        j.get("prompt") or "",
+        meta.get("negative_prompt") or "",
+        int(meta.get("steps", 25)),
+        float(meta.get("cfg", 1.0)),
+        int(meta.get("seed", -1)),
+        meta.get("aspect") or "1:1",
+        source,
+        target,
+        f"Paramètres du job {job_id} chargés dans le formulaire.",
+    )
+
 def _retry_job(job_id):
     try:
         new_id = controller.retry(job_id)
@@ -236,6 +267,7 @@ def build_ui():
                         value="image",
                         label="Tâche",
                     )
+                    task_help = gr.Markdown(_task_help("image"))
                     prompt = gr.Textbox(label="Prompt", lines=5, placeholder="Décris l'image à générer…")
                     negative = gr.Textbox(label="Negative prompt", lines=2)
                     with gr.Row():
@@ -309,6 +341,7 @@ def build_ui():
             lookup = gr.Textbox(label="Job ID à ouvrir")
             with gr.Row():
                 open_job = gr.Button("Ouvrir le job", variant="primary")
+                load_form_btn = gr.Button("↙ Charger dans Générer")
                 retry_job_btn = gr.Button("↻ Relancer le job")
                 logs_btn = gr.Button("📜 Logs Kaggle")
                 export_job_btn = gr.Button("📦 Export ZIP")
@@ -342,6 +375,7 @@ def build_ui():
                 cleanup_btn = gr.Button("🧹 Nettoyage sûr")
                 cleanup_out = gr.Textbox(label="Nettoyage", lines=3, interactive=False)
 
+        task.change(_task_help, [task], [task_help])
         submit.click(
             _submit,
             [task, prompt, negative, steps, cfg, seed, aspect, source, target],
@@ -363,6 +397,11 @@ def build_ui():
         )
         recent_reload.click(_recent_images, [recent_limit], [recent_gallery])
         open_job.click(_refresh, [lookup], [lib_status, lib_gallery, lib_video, lib_files, jobs])
+        load_form_btn.click(
+            _load_job_to_form,
+            [lookup],
+            [task, prompt, negative, steps, cfg, seed, aspect, source, target, submit_info],
+        )
         retry_job_btn.click(_retry_job, [lookup], [lookup, lib_status, jobs])
         logs_btn.click(_remote_logs, [lookup], [lib_logs])
         export_job_btn.click(_export_job, [lookup], [lib_export])
