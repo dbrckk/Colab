@@ -33,6 +33,14 @@ CREATE INDEX IF NOT EXISTS idx_jobs_updated ON jobs(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_artifacts_job ON artifacts(job_id, created_at);
 """
 
+def _decode_job_row(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+    item = dict(row)
+    try:
+        item["meta"] = json.loads(item.get("meta_json") or "{}")
+    except Exception:
+        item["meta"] = {}
+    return item
+
 class JobDB:
     def __init__(self, path: Path):
         self.path = Path(path)
@@ -103,17 +111,12 @@ class JobDB:
             row = con.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
         if not row:
             return None
-        item = dict(row)
-        try:
-            item["meta"] = json.loads(item.pop("meta_json", "{}"))
-        except Exception:
-            item["meta"] = {}
-        return item
+        return _decode_job_row(row)
 
     def list_jobs(self, limit: int = 100) -> list[dict[str, Any]]:
         with _LOCK, self._conn() as con:
             rows = con.execute("SELECT * FROM jobs ORDER BY updated_at DESC LIMIT ?", (int(limit),)).fetchall()
-        return [dict(r) for r in rows]
+        return [_decode_job_row(r) for r in rows]
 
     def add_artifact(self, job_id: str, path: str, kind: str) -> None:
         with _LOCK, self._conn() as con:
