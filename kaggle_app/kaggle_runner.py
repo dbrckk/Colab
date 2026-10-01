@@ -39,6 +39,105 @@ class KaggleController:
         self._futures: dict[str, Any] = {}
         self._cancelled: set[str] = set()
         self._lock = threading.RLock()
+        self._recover_persisted_jobs()
+
+    def _recover_persisted_jobs(self) -> None:
+        recoverable = {"submitting", "queued", "running", "downloading"}
+        interrupted = {"preparing", "uploading_inputs"}
+        for row in self.db.list_jobs(200):
+            job_id = row.get("id")
+            status = row.get("status")
+            kernel_ref = row.get("kernel_ref") or ""
+            if status in interrupted:
+                self.db.update_job(
+                    job_id,
+                    status="interrupted",
+                    error="Le contrôleur s'est arrêté avant la création complète du kernel Kaggle. Relance ce job.",
+                )
+            elif status in recoverable and kernel_ref:
+                with self._lock:
+                    self._futures[job_id] = self.executor.submit(self._recover_remote_job, job_id)
+
+    def _recover_remote_job(self, job_id: str) -> None:
+        job = self.db.get_job(job_id)
+        if not job:
+            return
+        kernel_ref = job.get("kernel_ref") or ""
+        meta = job.get("meta") or {}
+        dataset_ref = meta.get("dataset_ref") or ""
+        if not kernel_ref:
+            self.db.update_job(
+                job_id,
+                status="interrupted",
+                error="Kernel Kaggle introuvable pour la reprise.",
+            )
+            return
+
+        try:
+            self.db.update_job(job_id, status="recovering")
+            started = time.time()
+            while True:
+                self._check_cancelled(job_id)
+                if time.time() - started > self.settings.kernel_timeout + 1200:
+                    raise TimeoutError("Délai maximal dépassé pendant la récupération Kaggle.")
+                state, raw = self._kernel_status(kernel_ref)
+                self.db.update_job(
+                    job_id,
+                    status=("recovering" if state in {"queued", "running"} else state),
+                    meta_json={**meta, "dataset_ref": dataset_ref, "kaggle_status": raw[-1500:]},
+                )
+                if state == "complete":
+                    break
+                if state == "error":
+                    try:
+                        logs = self._run(["kernels", "logs", kernel_ref], timeout=180)
+                    except Exception:
+                        logs = raw
+                    raise RuntimeError("Le job Kaggle récupéré a échoué:\n" + logs[-7000:])
+                time.sleep(max(5, self.settings.poll_seconds))
+
+            with tempfile.TemporaryDirectory(prefix=f"qwen-kaggle-recover-{job_id}-") as td:
+                download = Path(td) / "download"
+                download.mkdir(parents=True, exist_ok=True)
+                self.db.update_job(job_id, status="downloading")
+                self._run(
+                    ["kernels", "output", kernel_ref, "-p", str(download), "-o", "-q"],
+                    timeout=900,
+                )
+                artifacts = import_outputs(job_id, download, self.settings.storage_root)
+                existing = {a["path"] for a in self.db.artifacts(job_id)}
+                for path, kind in artifacts:
+                    if str(path) not in existing:
+                        self.db.add_artifact(job_id, str(path), kind)
+                if not artifacts and not self.db.artifacts(job_id):
+                    raise RuntimeError("Aucun output Kaggle récupérable.")
+                self.db.update_job(job_id, status="done", error="")
+                self._cleanup_inputs(job_id)
+        except JobCancelled:
+            self.db.update_job(job_id, status="cancelled", error="")
+            self._cleanup_inputs(job_id)
+        except Exception as exc:
+            if self.is_cancelled(job_id):
+                self.db.update_job(job_id, status="cancelled", error="")
+            else:
+                self.db.update_job(
+                    job_id,
+                    status="error",
+                    error=f"Recovery {type(exc).__name__}: {exc}",
+                )
+        finally:
+            if kernel_ref and self.settings.delete_remote_kernel:
+                try:
+                    self._run(["kernels", "delete", kernel_ref, "-y"], timeout=180)
+                except Exception:
+                    pass
+            if dataset_ref and self.settings.delete_remote_kernel:
+                try:
+                    self._run(["datasets", "delete", dataset_ref, "-y"], timeout=180)
+                except Exception:
+                    pass
+            with self._lock:
+                self._cancelled.discard(job_id)
 
     def credentials_ready(self) -> bool:
         return bool(
