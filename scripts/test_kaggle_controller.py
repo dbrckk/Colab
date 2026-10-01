@@ -419,3 +419,40 @@ with tempfile.TemporaryDirectory() as td:
     assert recent[0]["kind"] == "image"
 
 print("Recent artifact library validation passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root,
+        storage_root=tmp / "media",
+        db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local",
+        worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1,
+        cli_retries=1,
+        kernel_timeout=60,
+        accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False,
+        keep_job_inputs=False,
+        keep_source_inputs_for_retry=True,
+        share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    uploaded = tmp / "video.mp4"
+    uploaded.write_bytes(b"video")
+    persisted = Path(controller._persist_input("retry-source", str(uploaded), "target_video"))
+    controller.db.create_job(
+        "retry-source",
+        "video_faceswap",
+        "",
+        {"target_video": str(persisted), "source_image": str(persisted)},
+    )
+    controller.db.update_job("retry-source", status="done")
+    controller._cleanup_inputs("retry-source")
+    assert persisted.exists(), "source-backed completed job lost retry input"
+    controller._cleanup_inputs("retry-source", force=True)
+    assert not persisted.exists()
+    controller.executor.shutdown(wait=False)
+
+print("Source-backed retry retention validation passed.")
