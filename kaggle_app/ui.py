@@ -29,9 +29,9 @@ def _jobs_table():
         ])
     return rows
 
-def _save_credentials(username, key, persist):
+def _save_credentials(username, api_token, legacy_key, persist):
     try:
-        msg = controller.save_credentials(username, key, persist)
+        msg = controller.save_credentials(username, api_token, legacy_key, persist)
         return msg, "✅ Kaggle prêt"
     except Exception as e:
         return f"{type(e).__name__}: {e}", "❌ Kaggle non configuré"
@@ -131,8 +131,10 @@ def build_ui():
             )
             kaggle_status = gr.Textbox(value=ready, label="État", interactive=False)
             username = gr.Textbox(value=os.getenv("KAGGLE_USERNAME", ""), label="KAGGLE_USERNAME")
-            key = gr.Textbox(value="", label="KAGGLE_KEY", type="password")
-            persist = gr.Checkbox(value=True, label="Sauvegarder localement dans .env.local")
+            api_token = gr.Textbox(value="", label="KAGGLE_API_TOKEN (recommandé)", type="password")
+            with gr.Accordion("Ancienne clé Kaggle (optionnel)", open=False):
+                legacy_key = gr.Textbox(value="", label="KAGGLE_KEY legacy", type="password")
+            persist = gr.Checkbox(value=True, label="Sauvegarder dans le stockage privé configuré")
             save = gr.Button("Enregistrer et tester Kaggle", variant="primary")
             save_msg = gr.Textbox(label="Résultat", lines=3, interactive=False)
 
@@ -144,7 +146,11 @@ def build_ui():
         refresh.click(_refresh, [job_id], [status, gallery, video, files, jobs])
         reload_jobs.click(_jobs_table, [], [jobs])
         open_job.click(_refresh, [lookup], [lib_status, lib_gallery, lib_video, lib_files, jobs])
-        save.click(_save_credentials, [username, key, persist], [save_msg, kaggle_status])
+        save.click(
+            _save_credentials,
+            [username, api_token, legacy_key, persist],
+            [save_msg, kaggle_status],
+        )
 
         try:
             timer = gr.Timer(value=5.0, active=True)
