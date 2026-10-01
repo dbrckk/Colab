@@ -2,7 +2,7 @@
 
 ## Lancement recommandé sur smartphone
 
-Ouvre `Qwen_Kaggle_Studio_Controller.ipynb` dans Google Colab et exécute son unique cellule. Le contrôleur monte Google Drive, lance Gradio et utilise Kaggle uniquement pour les tâches GPU. Les résultats sont conservés dans `MyDrive/QwenKaggleStudio/`.
+Ouvre `Qwen_Kaggle_Studio_Controller.ipynb` dans Google Colab et exécute son unique cellule. Le notebook lit automatiquement les **Secrets Colab** `KAGGLE_USERNAME` et `KAGGLE_API_TOKEN` s'ils existent. Le contrôleur monte Google Drive, lance Gradio et utilise Kaggle uniquement pour les tâches GPU. Les résultats sont conservés dans `MyDrive/QwenKaggleStudio/`.
 
 
 Cette interface transforme le repo en **contrôleur de jobs Kaggle**.
