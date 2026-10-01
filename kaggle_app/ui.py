@@ -158,6 +158,19 @@ def _refresh(job_id):
     files = [a["path"] for a in artifacts if Path(a["path"]).exists()]
 
     status = f"{j['status']}\nKaggle: {j['kernel_ref'] or '—'}"
+    result_manifest = (j.get("meta") or {}).get("result_manifest") or {}
+    if result_manifest:
+        details = []
+        if result_manifest.get("seed") is not None:
+            details.append(f"seed={result_manifest.get('seed')}")
+        if result_manifest.get("width") and result_manifest.get("height"):
+            details.append(f"{result_manifest.get('width')}×{result_manifest.get('height')}")
+        if result_manifest.get("steps") is not None:
+            details.append(f"steps={result_manifest.get('steps')}")
+        if result_manifest.get("worker_version"):
+            details.append(f"worker={result_manifest.get('worker_version')}")
+        if details:
+            status += "\nRésultat : " + " • ".join(details)
     position = controller.queue_position(job_id)
     if position is not None:
         status += f"\nPosition file locale : {position}"
