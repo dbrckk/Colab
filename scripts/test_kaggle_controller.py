@@ -777,3 +777,49 @@ with tempfile.TemporaryDirectory() as td:
     assert db.get_job("after-recovery") is not None
 
 print("SQLite corruption recovery validation passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root,
+        storage_root=tmp / "media",
+        db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local",
+        worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1,
+        cli_retries=1,
+        kernel_timeout=60,
+        accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False,
+        keep_job_inputs=False,
+        keep_source_inputs_for_retry=True,
+        share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    controller.db.create_job("known", "image", "x", {})
+
+    orphan = settings.storage_root / "_inputs" / "orphan"
+    orphan.mkdir(parents=True)
+    (orphan / "x.bin").write_bytes(b"x" * 100)
+
+    known = settings.storage_root / "_inputs" / "known"
+    known.mkdir(parents=True)
+    (known / "keep.bin").write_bytes(b"keep")
+
+    exports = settings.storage_root / "_exports"
+    exports.mkdir(parents=True)
+    old_zip = exports / "old.zip"
+    old_zip.write_bytes(b"z" * 100)
+    import os as _os
+    old_time = __import__("time").time() - 20 * 86400
+    _os.utime(old_zip, (old_time, old_time))
+
+    msg = controller.cleanup_storage(export_max_age_days=14)
+    assert "Nettoyage terminé" in msg
+    assert not orphan.exists()
+    assert known.exists()
+    assert not old_zip.exists()
+    controller.executor.shutdown(wait=False)
+
+print("Safe storage cleanup validation passed.")
