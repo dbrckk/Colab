@@ -125,7 +125,7 @@ def build_ui():
         with gr.Tab("✨ Générer"):
             with gr.Row():
                 with gr.Column(scale=5):
-                    task = gr.Dropdown(["image", "video_faceswap"], value="image", label="Tâche")
+                    task = gr.Dropdown(["image", "image_edit", "video_faceswap"], value="image", label="Tâche")
                     prompt = gr.Textbox(label="Prompt", lines=5, placeholder="Décris l'image à générer…")
                     negative = gr.Textbox(label="Negative prompt", lines=2)
                     with gr.Row():
@@ -138,8 +138,8 @@ def build_ui():
                     with gr.Row():
                         cfg = gr.Slider(1, 8, value=1.0, step=.5, label="CFG")
                         seed = gr.Number(value=-1, precision=0, label="Seed")
-                    with gr.Accordion("Entrées vidéo / face swap", open=False):
-                        source = gr.Image(label="Visage source", type="filepath")
+                    with gr.Accordion("Image/vidéo source", open=False):
+                        source = gr.Image(label="Image source / visage source", type="filepath")
                         target = gr.Video(label="Vidéo cible")
                     submit = gr.Button("🚀 Lancer sur Kaggle", variant="primary", elem_classes=["primary-action"])
                     job_id = gr.Textbox(label="Job ID")
