@@ -311,8 +311,10 @@ class KaggleController:
     ) -> str:
         if not self.credentials_ready():
             raise RuntimeError("Configure d'abord KAGGLE_USERNAME et KAGGLE_KEY.")
-        if task == "image" and not (prompt or "").strip():
+        if task in {"image", "image_edit"} and not (prompt or "").strip():
             raise ValueError("Le prompt est vide.")
+        if task == "image_edit" and not source_image:
+            raise ValueError("image_edit requiert une image source.")
         if task == "video_faceswap" and (not source_image or not target_video):
             raise ValueError("video_faceswap requiert un visage source et une vidéo cible.")
 
