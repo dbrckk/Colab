@@ -406,33 +406,41 @@ class KaggleController:
         job = self.db.get_job(job_id)
         if not job:
             return "Job introuvable."
-        if job.get("status") in {"done", "error", "cancelled"}:
+        if job.get("status") in {"done", "error", "cancelled", "interrupted"}:
             return f"Job déjà terminé: {job.get('status')}"
-
-        with self._lock:
-            self._cancelled.add(job_id)
-            future = self._futures.get(job_id)
-            cancelled_before_start = bool(future and future.cancel())
-
-        self.db.update_job(job_id, status="cancel_requested")
-        if cancelled_before_start:
-            self.db.update_job(job_id, status="cancelled")
-            return "Job annulé avant son démarrage. Les entrées sont conservées pour une éventuelle relance."
 
         kernel_ref = job.get("kernel_ref") or ""
         meta = job.get("meta") or {}
         dataset_ref = meta.get("dataset_ref") or ""
-        if kernel_ref:
-            try:
-                self._run(["kernels", "delete", kernel_ref, "-y"], timeout=180)
-            except Exception:
-                pass
-        if dataset_ref:
-            try:
-                self._run(["datasets", "delete", dataset_ref, "-y"], timeout=180)
-            except Exception:
-                pass
-        return "Annulation demandée. Le worker local finalise le nettoyage."
+
+        with self._lock:
+            self._cancelled.add(job_id)
+            future = self._futures.get(job_id)
+            future_active = bool(future and not future.done())
+            cancelled_before_start = bool(future_active and future.cancel())
+
+        # Purely local jobs (not authenticated yet, or queued without an active
+        # executor future) can be cancelled synchronously.
+        if not kernel_ref and (cancelled_before_start or not future_active):
+            self.db.update_job(job_id, status="cancelled", error="")
+            with self._lock:
+                self._cancelled.discard(job_id)
+            return "Job annulé localement. Les entrées sont conservées pour une éventuelle relance."
+
+        self.db.update_job(job_id, status="cancel_requested")
+
+        # Do not make the UI wait for remote deletion. The running worker will
+        # also see the cancellation flag and perform final reconciliation.
+        if kernel_ref or dataset_ref:
+            threading.Thread(
+                target=self._cleanup_remote_refs,
+                args=(kernel_ref, dataset_ref),
+                daemon=True,
+                name=f"kaggle-cancel-{job_id}",
+            ).start()
+
+        return "Annulation demandée. Nettoyage Kaggle en cours en arrière-plan."
+
 
     def _check_cancelled(self, job_id: str) -> None:
         if self.is_cancelled(job_id):
