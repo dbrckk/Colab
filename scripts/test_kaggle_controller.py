@@ -149,3 +149,55 @@ with tempfile.TemporaryDirectory() as td:
     controller.executor.shutdown(wait=False)
 
 print("Queued cancellation validation passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    root = Path(td)
+    source = root / "source"
+    source.mkdir()
+    storage = root / "storage"
+    (source / "same.png").write_bytes(b"same-content")
+    first = import_outputs("job-dedupe", source, storage)
+    second = import_outputs("job-dedupe", source, storage)
+    assert len(first) == 1 and len(second) == 1
+    assert first[0][0] == second[0][0]
+    assert len(list((storage / "job-dedupe").glob("*"))) == 1
+
+print("Artifact deduplication validation passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root,
+        storage_root=tmp / "media",
+        db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local",
+        worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1,
+        kernel_timeout=60,
+        accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False,
+        keep_job_inputs=False,
+        share_gradio=False,
+    )
+    first = KaggleController(settings)
+    first.db.create_job("stale-prep", "image", "x", {})
+    first.db.update_job("stale-prep", status="preparing")
+    first.db.create_job("remote-running", "image", "x", {})
+    first.db.update_job("remote-running", status="running", kernel_ref="ci-user/kernel")
+    first.executor.shutdown(wait=False)
+
+    original_recover = KaggleController._recover_remote_job
+    try:
+        KaggleController._recover_remote_job = (
+            lambda self, job_id: self.db.update_job(job_id, status="recovered-test")
+        )
+        second = KaggleController(settings)
+        second.executor.shutdown(wait=True)
+        assert second.db.get_job("stale-prep")["status"] == "interrupted"
+        assert second.db.get_job("remote-running")["status"] == "recovered-test"
+    finally:
+        KaggleController._recover_remote_job = original_recover
+
+print("Controller restart recovery validation passed.")
