@@ -1144,3 +1144,31 @@ with tempfile.TemporaryDirectory() as td:
     controller.executor.shutdown(wait=False)
 
 print("Cross-extension input deduplication validation passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root,
+        storage_root=tmp / "media",
+        db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local",
+        worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1,
+        cli_retries=1,
+        kernel_timeout=60,
+        accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False,
+        keep_job_inputs=False,
+        keep_source_inputs_for_retry=True,
+        share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    controller.db.create_job("wait-cancel", "image", "x", {})
+    controller.db.update_job("wait-cancel", status="waiting_auth")
+    msg = controller.cancel("wait-cancel")
+    assert "annulé" in msg.lower()
+    assert controller.db.get_job("wait-cancel")["status"] == "cancelled"
+    controller.executor.shutdown(wait=False)
+
+print("Waiting-auth cancellation validation passed.")
