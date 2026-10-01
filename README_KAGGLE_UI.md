@@ -100,3 +100,17 @@ Quand `QWEN_KAGGLE_SHARE=true`, l'URL Gradio publique est protégée par un util
 - Les téléchargements Qwen (DiT, VAE, Heretic et mmproj si nécessaire) sont lancés en parallèle sur le worker Kaggle.
 - Le runtime `stable-diffusion.cpp` tente d'abord un binaire CUDA précompilé.
 - Si le runtime précompilé ne fonctionne pas, le worker installe automatiquement les outils de build manquants puis compile `sd-cli`.
+
+
+## Génération par lot optimisée
+
+La génération par lot ne crée plus un kernel Kaggle par prompt. Un lot de jusqu'à 20 prompts devient **un seul job Kaggle** :
+
+- Qwen et le runtime sont chargés une seule fois ;
+- les images sont générées successivement dans la même session GPU ;
+- les résultats sont récupérés ensemble dans la bibliothèque ;
+- avec une seed fixe, les seeds sont incrémentées pour chaque image.
+
+## Génération texte → image accélérée
+
+Un job `image` ou `image_batch` sans fichier source **ne crée plus de dataset Kaggle temporaire**. La configuration est injectée directement dans le notebook privé généré. Les datasets privés temporaires ne sont créés que lorsque des fichiers doivent réellement être transférés, par exemple pour `image_edit` ou `video_faceswap`.
