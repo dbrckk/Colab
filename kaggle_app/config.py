@@ -17,6 +17,7 @@ class Settings:
     root: Path = ROOT
     storage_root: Path = Path(os.getenv("QWEN_KAGGLE_STORAGE", ROOT / "storage" / "kaggle_media"))
     db_path: Path = Path(os.getenv("QWEN_KAGGLE_DB", ROOT / "storage" / "kaggle_jobs.sqlite3"))
+    env_file: Path = Path(os.getenv("QWEN_KAGGLE_ENV_FILE", ROOT / ".env.local"))
     worker_path: Path = ROOT / "kaggle_worker" / "worker.py"
     poll_seconds: int = int(os.getenv("KAGGLE_POLL_SECONDS", "20"))
     kernel_timeout: int = int(os.getenv("KAGGLE_KERNEL_TIMEOUT", "21600"))
@@ -35,6 +36,7 @@ class Settings:
     def ensure_dirs(self) -> None:
         self.storage_root.mkdir(parents=True, exist_ok=True)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.env_file.parent.mkdir(parents=True, exist_ok=True)
 
 SETTINGS = Settings()
 SETTINGS.ensure_dirs()
