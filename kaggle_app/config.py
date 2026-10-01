@@ -30,6 +30,10 @@ class Settings:
         return os.getenv("KAGGLE_USERNAME", "").strip()
 
     @property
+    def kaggle_api_token(self) -> str:
+        return os.getenv("KAGGLE_API_TOKEN", "").strip()
+
+    @property
     def kaggle_key(self) -> str:
         return os.getenv("KAGGLE_KEY", "").strip()
 
