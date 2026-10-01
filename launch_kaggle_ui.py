@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 def load_local_env() -> None:
-    path = Path(__file__).resolve().parent / ".env.local"
+    path = Path(os.getenv("QWEN_KAGGLE_ENV_FILE", Path(__file__).resolve().parent / ".env.local"))
     if not path.exists():
         return
     for raw in path.read_text(encoding="utf-8").splitlines():
