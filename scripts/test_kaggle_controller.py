@@ -265,3 +265,68 @@ for token in [
 ]:
     assert token in worker_source, f"Missing worker capability: {token}"
 print("Kaggle worker syntax validation passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root,
+        storage_root=tmp / "media",
+        db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local",
+        worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1,
+        kernel_timeout=60,
+        accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False,
+        keep_job_inputs=False,
+        share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    controller.db.create_job("q1", "image", "a", {})
+    controller.db.create_job("q2", "image", "b", {})
+    controller.db.update_job("q1", status="queued")
+    controller.db.update_job("q2", status="queued")
+    assert controller.queue_position("q1") == 1
+    assert controller.queue_position("q2") == 2
+
+    media = settings.storage_root / "q1"
+    media.mkdir(parents=True)
+    (media / "a.bin").write_bytes(b"x" * 1234)
+    assert controller.job_storage_bytes("q1") == 1234
+    controller.executor.shutdown(wait=False)
+
+print("Queue and storage validation passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root,
+        storage_root=tmp / "media",
+        db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local",
+        worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1,
+        kernel_timeout=60,
+        accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False,
+        keep_job_inputs=False,
+        share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    uploaded = tmp / "source.png"
+    uploaded.write_bytes(b"source")
+    persisted = Path(controller._persist_input("cancel-input", str(uploaded), "source_image"))
+    controller.db.create_job(
+        "cancel-input",
+        "image_edit",
+        "edit",
+        {"source_image": str(persisted)},
+    )
+    controller.db.update_job("cancel-input", status="queued")
+    controller.cancel("cancel-input")
+    assert persisted.exists(), "cancel unexpectedly removed retryable input"
+    controller.executor.shutdown(wait=False)
+
+print("Cancelled input retention validation passed.")
