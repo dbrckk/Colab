@@ -93,3 +93,33 @@ with tempfile.TemporaryDirectory() as td:
     controller.executor.shutdown(wait=False)
 
 print("Generated Kaggle notebook validation passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root,
+        storage_root=tmp / "media",
+        db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local",
+        worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=5,
+        kernel_timeout=3600,
+        accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=True,
+        keep_job_inputs=False,
+        share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    uploaded = tmp / "temporary-upload.jpg"
+    uploaded.write_bytes(b"temporary-gradio-upload")
+    persisted = Path(controller._persist_input("job-upload", str(uploaded), "source_image"))
+    assert persisted.exists()
+    assert persisted.read_bytes() == uploaded.read_bytes()
+    uploaded.unlink()
+    assert persisted.exists(), "persisted upload disappeared with temporary source"
+    controller._cleanup_inputs("job-upload")
+    assert not persisted.exists()
+    controller.executor.shutdown(wait=False)
+
+print("Persisted upload validation passed.")
