@@ -799,6 +799,54 @@ class KaggleController:
             with self._lock:
                 self._cancelled.discard(job_id)
 
+    def cleanup_storage(self, export_max_age_days: int = 14) -> str:
+        now = time.time()
+        removed_exports = 0
+        removed_inputs = 0
+        reclaimed = 0
+
+        export_root = self.settings.storage_root / "_exports"
+        if export_root.exists():
+            cutoff = now - max(1, int(export_max_age_days)) * 86400
+            for p in export_root.glob("*.zip"):
+                try:
+                    if p.stat().st_mtime < cutoff:
+                        reclaimed += p.stat().st_size
+                        p.unlink()
+                        removed_exports += 1
+                except OSError:
+                    pass
+
+        known_ids = {str(j.get("id")) for j in self.db.list_jobs(100000)}
+        input_root = self.settings.storage_root / "_inputs"
+        if input_root.exists():
+            for d in input_root.iterdir():
+                if not d.is_dir() or d.name in known_ids:
+                    continue
+                try:
+                    for p in d.rglob("*"):
+                        if p.is_file():
+                            reclaimed += p.stat().st_size
+                except OSError:
+                    pass
+                shutil.rmtree(d, ignore_errors=True)
+                removed_inputs += 1
+
+        try:
+            self.db.vacuum()
+        except Exception:
+            pass
+
+        amount = (
+            f"{reclaimed / 1024**3:.2f} Go"
+            if reclaimed >= 1024**3
+            else f"{reclaimed / 1024**2:.1f} Mo"
+        )
+        return (
+            f"Nettoyage terminé • {removed_exports} export(s) ancien(s) • "
+            f"{removed_inputs} dossier(s) d'entrée orphelin(s) • {amount} libéré(s)."
+        )
+
     def dashboard_summary(self) -> str:
         jobs = self.db.list_jobs(1000)
         active_states = {
