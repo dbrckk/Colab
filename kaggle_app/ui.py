@@ -71,7 +71,7 @@ def _refresh(job_id):
     return status, images, (videos[0] if videos else None), files, _jobs_table()
 
 def build_ui():
-    with gr.Blocks(title="Qwen Kaggle Studio", css=CSS, theme=gr.themes.Soft()) as demo:
+    with gr.Blocks(title="Qwen Kaggle Studio") as demo:
         gr.HTML(
             "<div class='hero'><h1>Qwen Kaggle Studio</h1>"
             "<p>Prompt/upload → Kaggle GPU → récupération automatique → bibliothèque locale.</p></div>"
