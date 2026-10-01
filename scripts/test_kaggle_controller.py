@@ -123,3 +123,29 @@ with tempfile.TemporaryDirectory() as td:
     controller.executor.shutdown(wait=False)
 
 print("Persisted upload validation passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root,
+        storage_root=tmp / "media",
+        db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local",
+        worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=5,
+        kernel_timeout=3600,
+        accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=True,
+        keep_job_inputs=False,
+        share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    controller.db.create_job("cancel-me", "image", "x", {})
+    # Simulate cancellation before a remote kernel exists.
+    msg = controller.cancel("cancel-me")
+    assert "Annulation demandée" in msg or "annulé" in msg.lower()
+    assert controller.db.get_job("cancel-me")["status"] in {"cancel_requested", "cancelled"}
+    controller.executor.shutdown(wait=False)
+
+print("Queued cancellation validation passed.")
