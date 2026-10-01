@@ -54,6 +54,13 @@ def _save_credentials(username, api_token, legacy_key, persist):
     except Exception as e:
         return f"{type(e).__name__}: {e}", "❌ Kaggle non configuré"
 
+def _submit_batch(prompts, negative, steps, cfg, seed, aspect):
+    try:
+        ids = controller.submit_batch(prompts, negative, steps, cfg, seed, aspect)
+        return "\n".join(ids), f"{len(ids)} job(s) ajoutés à la file Kaggle.", _jobs_table()
+    except Exception as e:
+        raise gr.Error(str(e))
+
 def _submit(task, prompt, negative, steps, cfg, seed, aspect, source, target):
     try:
         job_id = controller.submit(
@@ -144,6 +151,15 @@ def build_ui():
                     submit = gr.Button("🚀 Lancer sur Kaggle", variant="primary", elem_classes=["primary-action"])
                     job_id = gr.Textbox(label="Job ID")
                     submit_info = gr.Textbox(label="Envoi", interactive=False)
+                    with gr.Accordion("📦 Génération par lot", open=False):
+                        gr.Markdown("Un prompt par ligne • maximum 20 images • exécution séquentielle sur Kaggle.")
+                        batch_prompts = gr.Textbox(
+                            label="Prompts du lot",
+                            lines=8,
+                            placeholder="Prompt 1\nPrompt 2\nPrompt 3",
+                        )
+                        batch_submit = gr.Button("Ajouter le lot à la file")
+                        batch_ids = gr.Textbox(label="Jobs créés", lines=6, interactive=False)
 
                 with gr.Column(scale=6):
                     status = gr.Textbox(label="État", lines=5, interactive=False)
@@ -198,6 +214,11 @@ def build_ui():
             _submit,
             [task, prompt, negative, steps, cfg, seed, aspect, source, target],
             [job_id, submit_info, jobs],
+        )
+        batch_submit.click(
+            _submit_batch,
+            [batch_prompts, negative, steps, cfg, seed, aspect],
+            [batch_ids, submit_info, jobs],
         )
         refresh.click(_refresh, [job_id], [status, gallery, video, files, jobs])
         retry.click(_retry_job, [job_id], [job_id, submit_info, jobs])
