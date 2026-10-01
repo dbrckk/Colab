@@ -1,3 +1,15 @@
+# Qwen Kaggle Studio — interface recommandée
+
+Le mode le plus simple est désormais le **contrôleur Kaggle** : Colab ne sert qu'à héberger l'interface, et les tâches GPU sont exécutées sur Kaggle. Les images/vidéos récupérées sont stockées automatiquement dans Google Drive.
+
+[![Ouvrir le contrôleur Kaggle dans Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/dbrckk/Colab/blob/main/Qwen_Kaggle_Studio_Controller.ipynb)
+
+Flux : **UI Gradio → dataset privé temporaire → notebook Kaggle GPU → récupération outputs → Google Drive + SQLite**.
+
+Documentation : `README_KAGGLE_UI.md`.
+
+---
+
 # Qwen Studio — Heretic GGUF v8
 
 Interface Gradio mobile-first pour Qwen-Image 2.1 avec le text encoder Heretic GGUF.
