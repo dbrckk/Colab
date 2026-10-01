@@ -317,10 +317,17 @@ class KaggleController:
         shutil.copy2(src, dest)
         return str(dest)
 
-    def _cleanup_inputs(self, job_id: str) -> None:
-        if self.settings.keep_job_inputs:
-            return
+    def _cleanup_inputs(self, job_id: str, force: bool = False) -> None:
+        if not force:
+            if self.settings.keep_job_inputs:
+                return
+            job = self.db.get_job(job_id)
+            meta = (job or {}).get("meta") or {}
+            has_source = bool(meta.get("source_image") or meta.get("target_video"))
+            if has_source and self.settings.keep_source_inputs_for_retry:
+                return
         shutil.rmtree(self.settings.storage_root / "_inputs" / job_id, ignore_errors=True)
+
 
     def submit(
         self,
@@ -738,7 +745,7 @@ class KaggleController:
         if job.get("status") in {"queued", "running", "submitting", "recovering", "downloading", "cancel_requested"}:
             raise RuntimeError("Annule d'abord le job actif.")
         shutil.rmtree(self.settings.storage_root / job_id, ignore_errors=True)
-        shutil.rmtree(self.settings.storage_root / "_inputs" / job_id, ignore_errors=True)
+        self._cleanup_inputs(job_id, force=True)
         self.db.delete_job(job_id)
         return f"Job {job_id} supprimé du stockage local."
 
