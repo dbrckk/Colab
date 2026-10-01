@@ -82,7 +82,7 @@ class KaggleController:
         os.environ["KAGGLE_USERNAME"] = username
         os.environ["KAGGLE_KEY"] = key
         if persist:
-            env_path = self.settings.root / ".env.local"
+            env_path = self.settings.env_file
             env_path.write_text(
                 f"KAGGLE_USERNAME={username}\nKAGGLE_KEY={key}\n",
                 encoding="utf-8",
