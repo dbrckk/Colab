@@ -77,6 +77,17 @@ class KaggleController:
             elif status in recoverable and kernel_ref:
                 with self._lock:
                     self._futures[job_id] = self.executor.submit(self._recover_remote_job, job_id)
+            elif status in {"queued", "waiting_auth"} and not kernel_ref:
+                if self.credentials_ready():
+                    self.db.update_job(job_id, status="queued", error="")
+                    with self._lock:
+                        self._futures[job_id] = self.executor.submit(self._execute, job_id)
+                else:
+                    self.db.update_job(
+                        job_id,
+                        status="waiting_auth",
+                        error="En attente des identifiants Kaggle pour reprendre la file locale.",
+                    )
 
     def _media_integrity_ok(self, path: Path, kind: str) -> bool:
         try:
@@ -237,6 +248,25 @@ class KaggleController:
             with self._lock:
                 self._cancelled.discard(job_id)
 
+    def resume_waiting_jobs(self) -> int:
+        if not self.credentials_ready():
+            return 0
+        resumed = 0
+        for row in self.db.list_jobs(500):
+            if row.get("status") != "waiting_auth":
+                continue
+            job_id = row.get("id")
+            if not job_id:
+                continue
+            with self._lock:
+                future = self._futures.get(job_id)
+                if future is not None and not future.done():
+                    continue
+                self.db.update_job(job_id, status="queued", error="")
+                self._futures[job_id] = self.executor.submit(self._execute, job_id)
+                resumed += 1
+        return resumed
+
     def credentials_ready(self) -> bool:
         return bool(
             self.settings.kaggle_username
@@ -354,10 +384,13 @@ class KaggleController:
                 pass
 
         self._run(["kernels", "list", "-m", "-p", "1"], timeout=120)
+        resumed = self.resume_waiting_jobs()
         mode = "API token" if api_token else "legacy key"
+        suffix = f" {resumed} job(s) en attente relancé(s)." if resumed else ""
         return (
             f"Identifiants Kaggle validés ({mode})"
             + (" et sauvegardés dans le stockage privé configuré." if persist else ".")
+            + suffix
         )
 
     def is_cancelled(self, job_id: str) -> bool:
@@ -770,7 +803,7 @@ class KaggleController:
         jobs = self.db.list_jobs(1000)
         active_states = {
             "preparing", "uploading_inputs", "submitting",
-            "queued", "running", "recovering", "downloading",
+            "queued", "waiting_auth", "running", "recovering", "downloading",
             "cancel_requested",
         }
         active = sum(1 for j in jobs if j.get("status") in active_states)
@@ -854,7 +887,7 @@ class KaggleController:
     def queue_position(self, job_id: str) -> int | None:
         active = {
             "preparing", "uploading_inputs", "submitting",
-            "queued", "running", "recovering", "downloading",
+            "queued", "waiting_auth", "running", "recovering", "downloading",
         }
         rows = [
             j for j in self.db.list_jobs(500)
