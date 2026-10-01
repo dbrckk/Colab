@@ -53,6 +53,32 @@ def _recent_images(limit=60):
             items.append((path, caption))
     return items
 
+def _format_elapsed(seconds):
+    seconds = max(0, int(seconds or 0))
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m {seconds % 60:02d}s"
+    return f"{seconds // 3600}h {(seconds % 3600) // 60:02d}m"
+
+def _format_job_row(j):
+    import time as _time
+    created = float(j.get("created_at") or 0)
+    updated = float(j.get("updated_at") or created)
+    terminal = j.get("status") in {"done", "error", "cancelled", "interrupted"}
+    end = updated if terminal else _time.time()
+    created_text = _time.strftime("%d/%m %H:%M", _time.localtime(created)) if created else "—"
+    return [
+        j["id"],
+        j["task"],
+        j["status"],
+        created_text,
+        _format_elapsed(end - created if created else 0),
+        j["kernel_ref"],
+        (j["prompt"] or "")[:90],
+        (j["error"] or "")[-180:],
+    ]
+
 def _filter_jobs(status_filter="Tous", task_filter="Tous", query=""):
     query = (query or "").strip().lower()
     rows = []
@@ -69,27 +95,13 @@ def _filter_jobs(status_filter="Tous", task_filter="Tous", query=""):
         ]).lower()
         if query and query not in haystack:
             continue
-        rows.append([
-            j["id"],
-            j["task"],
-            j["status"],
-            j["kernel_ref"],
-            (j["prompt"] or "")[:90],
-            (j["error"] or "")[-180:],
-        ])
+        rows.append(_format_job_row(j))
     return rows
 
 def _jobs_table():
     rows = []
     for j in controller.jobs(100):
-        rows.append([
-            j["id"],
-            j["task"],
-            j["status"],
-            j["kernel_ref"],
-            (j["prompt"] or "")[:90],
-            (j["error"] or "")[-180:],
-        ])
+        rows.append(_format_job_row(j))
     return rows
 
 def _cleanup_storage(days):
@@ -287,7 +299,7 @@ def build_ui():
                 job_search = gr.Textbox(label="Rechercher", placeholder="Prompt, Job ID, erreur…")
                 job_filter_btn = gr.Button("Filtrer")
             jobs = gr.Dataframe(
-                headers=["Job ID", "Type", "État", "Kernel Kaggle", "Prompt", "Erreur"],
+                headers=["Job ID", "Type", "État", "Créé", "Durée", "Kernel Kaggle", "Prompt", "Erreur"],
                 value=_jobs_table(),
                 interactive=False,
                 wrap=True,
