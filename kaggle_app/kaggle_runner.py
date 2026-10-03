@@ -559,8 +559,15 @@ class KaggleController:
             and now - float(self._auth_cache.get("ts") or 0) <= max(0, int(max_age_seconds))
         ):
             return
-        self._run(["kernels", "list", "-m", "-p", "1"], timeout=120)
-        self._auth_cache = {"fingerprint": fingerprint, "ts": now}
+        try:
+            self._run(["kernels", "list", "-m", "-p", "1"], timeout=120)
+        except Exception:
+            # A forced/expired validation must never leave a stale "ready"
+            # indicator for the same credentials.
+            if self._auth_cache.get("fingerprint") == fingerprint:
+                self._auth_cache = {"fingerprint": "", "ts": 0.0}
+            raise
+        self._auth_cache = {"fingerprint": fingerprint, "ts": time.time()}
 
     def _env(self) -> dict[str, str]:
         env = os.environ.copy()
@@ -1776,7 +1783,7 @@ class KaggleController:
             lines.append("⚠️ Kaggle non authentifié.")
         else:
             try:
-                self._run(["kernels", "list", "-m", "-p", "1"], timeout=120)
+                self.validate_current_credentials(max_age_seconds=0)
                 lines.append("✅ Authentification Kaggle valide.")
             except Exception as exc:
                 lines.append(f"❌ Authentification Kaggle: {type(exc).__name__}: {exc}")
