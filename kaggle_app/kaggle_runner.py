@@ -31,6 +31,7 @@ from .kaggle_protocol import (
     parse_kernel_status,
     remote_kernel_missing,
 )
+from .kaggle_dataset import write_dataset_bundle
 from .kaggle_inputs import validate_submission
 from .kaggle_kernel import write_kernel_bundle
 from .kaggle_outputs import validate_downloaded_outputs
@@ -894,27 +895,12 @@ class KaggleController:
 
     def _prepare_dataset(self, job: dict[str, Any], folder: Path, dataset_ref: str | None = None) -> str:
         dataset_ref = dataset_ref or self._dataset_ref(job)
-        config = self._job_config(job)
-        for key in ("source_image", "target_video"):
-            src = config.get(key)
-            if src:
-                p = Path(src)
-                if not p.exists():
-                    raise FileNotFoundError(f"Fichier d'entrée introuvable: {p}")
-                target = folder / ("source_image" + p.suffix if key == "source_image" else "target_video" + p.suffix)
-                shutil.copy2(p, target)
-                config[key] = target.name
-
-        (folder / "job_config.json").write_text(
-            json.dumps(config, ensure_ascii=False, indent=2),
-            encoding="utf-8",
+        write_dataset_bundle(
+            folder,
+            job_id=job["id"],
+            dataset_ref=dataset_ref,
+            config=self._job_config(job),
         )
-        metadata = {
-            "title": f"Qwen input {job['id']}"[:50],
-            "id": dataset_ref,
-            "licenses": [{"name": "other"}],
-        }
-        (folder / "dataset-metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
         try:
             self._run(
                 ["datasets", "create", "-p", str(folder), "-q", "-t", "-r", "skip"],
