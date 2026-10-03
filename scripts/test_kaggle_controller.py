@@ -1399,3 +1399,25 @@ with tempfile.TemporaryDirectory() as td:
     assert not list((storage / "atomic").glob(".*.part"))
 
 print("Atomic output import validation passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root, storage_root=tmp / "media", db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local", worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1, cli_retries=1, kernel_timeout=60, accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False, keep_job_inputs=False,
+        keep_source_inputs_for_retry=True, share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    controller.db.create_job("stale-artifact", "image", "x", {})
+    missing = tmp / "media" / "stale-artifact" / "gone.png"
+    controller.db.add_artifact("stale-artifact", str(missing), "image")
+    checked, removed = controller.reconcile_artifacts()
+    assert checked >= 1
+    assert removed == 1
+    assert controller.db.artifacts("stale-artifact") == []
+    controller.executor.shutdown(wait=False)
+
+print("Artifact reconciliation validation passed.")
