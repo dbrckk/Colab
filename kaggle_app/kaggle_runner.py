@@ -431,7 +431,7 @@ class KaggleController:
             current = self.db.get_job(job_id) or {}
             current_meta = current.get("meta") or {}
             keep_for_retry = bool(
-                current.get("status") == "error"
+                current.get("status") in {"error", "waiting_auth"}
                 and current_meta.get("recover_outputs_available")
                 and kernel_ref
             )
