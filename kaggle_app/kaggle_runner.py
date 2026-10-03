@@ -1513,6 +1513,16 @@ class KaggleController:
             return "Job introuvable."
         if job.get("status") in {"queued", "running", "submitting", "recovering", "downloading", "cancel_requested"}:
             raise RuntimeError("Annule d'abord le job actif.")
+        kernel_ref = job.get("kernel_ref") or ""
+        meta = job.get("meta") or {}
+        dataset_ref = meta.get("dataset_ref") or ""
+        if kernel_ref or dataset_ref:
+            try:
+                self._cleanup_remote_refs(kernel_ref, dataset_ref)
+            except Exception:
+                # Local deletion must remain possible if Kaggle is offline or
+                # credentials have expired; remote cleanup is best-effort.
+                pass
         shutil.rmtree(self.settings.storage_root / job_id, ignore_errors=True)
         self._cleanup_inputs(job_id, force=True)
         try:
