@@ -61,6 +61,7 @@ class KaggleController:
         self._cancelled: set[str] = set()
         self._lock = threading.RLock()
         self._storage_cache = {"ts": 0.0, "bytes": 0}
+        self._auth_cache = {"fingerprint": "", "ts": 0.0}
         self._recover_persisted_jobs()
 
     def _recover_persisted_jobs(self) -> None:
@@ -488,6 +489,30 @@ class KaggleController:
             and (self.settings.kaggle_api_token or self.settings.kaggle_key)
         )
 
+    def _credential_fingerprint(self) -> str:
+        username = self.settings.kaggle_username
+        secret = self.settings.kaggle_api_token or self.settings.kaggle_key
+        if not username or not secret:
+            return ""
+        return hashlib.sha256(f"{username}\0{secret}".encode("utf-8")).hexdigest()
+
+    def validate_current_credentials(self, max_age_seconds: int = 300) -> None:
+        if not self.credentials_ready():
+            raise RuntimeError(
+                "Configure d'abord KAGGLE_USERNAME et KAGGLE_API_TOKEN "
+                "(ou KAGGLE_KEY legacy)."
+            )
+        fingerprint = self._credential_fingerprint()
+        now = time.time()
+        if (
+            fingerprint
+            and self._auth_cache.get("fingerprint") == fingerprint
+            and now - float(self._auth_cache.get("ts") or 0) <= max(0, int(max_age_seconds))
+        ):
+            return
+        self._run(["kernels", "list", "-m", "-p", "1"], timeout=120)
+        self._auth_cache = {"fingerprint": fingerprint, "ts": now}
+
     def _env(self) -> dict[str, str]:
         env = os.environ.copy()
         if self.settings.kaggle_username:
@@ -619,6 +644,10 @@ class KaggleController:
         try:
             # Validate the candidate credentials before changing persistent state.
             self._run(["kernels", "list", "-m", "-p", "1"], timeout=120)
+            self._auth_cache = {
+                "fingerprint": self._credential_fingerprint(),
+                "ts": time.time(),
+            }
 
             if persist:
                 env_path = self.settings.env_file
@@ -905,8 +934,7 @@ class KaggleController:
         source_image: str | None = None,
         target_video: str | None = None,
     ) -> str:
-        if not self.credentials_ready():
-            raise RuntimeError("Configure d'abord KAGGLE_USERNAME et KAGGLE_API_TOKEN (ou KAGGLE_KEY legacy).")
+        self.validate_current_credentials()
         self._validate_submission(
             task, prompt, steps, cfg, seed, aspect, source_image, target_video
         )
@@ -974,11 +1002,7 @@ class KaggleController:
         aspect: str = "1:1",
         max_batch: int = 20,
     ) -> list[str]:
-        if not self.credentials_ready():
-            raise RuntimeError(
-                "Configure d'abord KAGGLE_USERNAME et KAGGLE_API_TOKEN "
-                "(ou KAGGLE_KEY legacy)."
-            )
+        self.validate_current_credentials()
         self._validate_submission("image", "batch", steps, cfg, seed, aspect)
         lines = [line.strip() for line in (prompts or "").splitlines() if line.strip()]
         if not lines:
