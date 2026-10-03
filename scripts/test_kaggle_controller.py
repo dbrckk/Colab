@@ -3316,3 +3316,88 @@ with tempfile.TemporaryDirectory() as td:
             os.environ[key] = value
 
 print("Invalid Kaggle credential rollback passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root, storage_root=tmp / "media", db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local", worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1, cli_retries=1, kernel_timeout=60, accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=True, delete_remote_dataset=True,
+        keep_job_inputs=False, keep_source_inputs_for_retry=True, share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    controller.db.create_job("ambiguous-remote", "image", "x", {})
+    controller._prepare_kernel = lambda job, folder, dataset_ref: "ci-user/ambiguous-kernel"
+    controller._run = lambda *args, **kwargs: ""
+    controller._kernel_status = lambda ref: (_ for _ in ()).throw(
+        RuntimeError("temporary status endpoint failure")
+    )
+    cleanup_calls = []
+    controller._cleanup_remote_refs = lambda kernel_ref="", dataset_ref="", force=False: cleanup_calls.append(
+        (kernel_ref, dataset_ref, force)
+    )
+    controller._execute("ambiguous-remote")
+    row = controller.db.get_job("ambiguous-remote")
+    assert row["status"] == "error"
+    assert row["meta"]["recover_outputs_available"] is True
+    assert row["meta"]["remote_failure_confirmed"] is False
+    assert row["kernel_ref"] == "ci-user/ambiguous-kernel"
+    assert not any(call[0] == "ci-user/ambiguous-kernel" for call in cleanup_calls)
+    controller.executor.shutdown(wait=False)
+
+print("Ambiguous remote failure preserves kernel for recovery.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root, storage_root=tmp / "media", db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local", worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1, cli_retries=1, kernel_timeout=60, accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=True, delete_remote_dataset=True,
+        keep_job_inputs=False, keep_source_inputs_for_retry=True, share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    controller.db.create_job("confirmed-remote-failure", "image", "x", {})
+    controller._prepare_kernel = lambda job, folder, dataset_ref: "ci-user/failed-kernel"
+    command_log = []
+    controller._run = lambda args, **kwargs: command_log.append(args) or (
+        "worker traceback" if args[:2] == ["kernels", "logs"] else ""
+    )
+    controller._kernel_status = lambda ref: ("error", "status: error")
+    cleanup_calls = []
+    controller._cleanup_remote_refs = lambda kernel_ref="", dataset_ref="", force=False: cleanup_calls.append(
+        (kernel_ref, dataset_ref, force)
+    )
+    controller._execute("confirmed-remote-failure")
+    row = controller.db.get_job("confirmed-remote-failure")
+    assert row["status"] == "error"
+    assert row["meta"]["recover_outputs_available"] is False
+    assert row["meta"]["remote_failure_confirmed"] is True
+    assert any(call[0] == "ci-user/failed-kernel" for call in cleanup_calls)
+    controller.executor.shutdown(wait=False)
+
+print("Confirmed remote failure does not create false recovery source.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root, storage_root=tmp / "media", db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local", worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1, cli_retries=1, kernel_timeout=60, accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False, delete_remote_dataset=True,
+        keep_job_inputs=False, keep_source_inputs_for_retry=True, share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    controller._run = lambda *args, **kwargs: "mystery-state-from-api"
+    try:
+        controller._kernel_status("ci-user/kernel")
+        raise AssertionError("unknown Kaggle status was treated as running")
+    except RuntimeError as exc:
+        assert "Statut Kaggle non reconnu" in str(exc)
+    controller.executor.shutdown(wait=False)
+
+print("Unknown Kaggle status is fail-safe instead of assumed running.")
