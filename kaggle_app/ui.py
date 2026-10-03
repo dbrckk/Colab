@@ -268,6 +268,17 @@ def _refresh(job_id):
 
     status = f"{j['status']}\nKaggle: {j['kernel_ref'] or '—'}"
     job_meta = j.get("meta") or {}
+    if j.get("status") == "waiting_auth":
+        if j.get("kernel_ref"):
+            status += (
+                "\nAuthentification requise : le kernel distant est conservé. "
+                "Enregistre des identifiants Kaggle valides pour reprendre sans recalcul."
+            )
+        else:
+            status += (
+                "\nAuthentification requise : la préparation locale est conservée. "
+                "Enregistre des identifiants Kaggle valides pour reprendre automatiquement."
+            )
     if job_meta.get("recover_outputs_available"):
         attempts = int(job_meta.get("auto_recovery_attempts") or 0)
         status += "\nOutput Kaggle conservé : récupération sans recalcul disponible."
