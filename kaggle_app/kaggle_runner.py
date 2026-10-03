@@ -27,8 +27,10 @@ from .kaggle_protocol import (
 )
 from .kaggle_recovery import (
     auto_recovery_attempts,
+    has_recoverable_outputs,
     keep_remote_kernel_for_retry,
     recoverable_output_candidate,
+    remote_kernel_is_preserved,
     startup_recovery_action,
 )
 from .storage import import_outputs, scan_outputs
@@ -1361,7 +1363,7 @@ class KaggleController:
         if job.get("status") not in {"error", "interrupted"}:
             raise ValueError("La récupération manuelle est réservée aux jobs en erreur/interrompus.")
         meta = job.get("meta") or {}
-        if not meta.get("recover_outputs_available"):
+        if not has_recoverable_outputs(job):
             raise ValueError(
                 "Ce job ne possède pas d'outputs Kaggle conservés. Utilise Relancer pour recalculer."
             )
@@ -1439,7 +1441,7 @@ class KaggleController:
         removed = 0
         for row in self.db.list_jobs(100000):
             meta = row.get("meta") or {}
-            if not meta.get("recover_outputs_available"):
+            if not has_recoverable_outputs(row):
                 continue
             if float(row.get("updated_at") or 0) >= cutoff:
                 continue
@@ -1624,21 +1626,8 @@ class KaggleController:
 
         jobs = self.db.list_jobs(1000)
         waiting_auth = sum(1 for row in jobs if row.get("status") == "waiting_auth")
-        recoverable = sum(
-            1 for row in jobs
-            if (row.get("meta") or {}).get("recover_outputs_available")
-        )
-        remote_preserved = sum(
-            1 for row in jobs
-            if row.get("kernel_ref")
-            and (
-                row.get("status") in {"waiting_auth", "recovering", "downloading"}
-                or (
-                    row.get("status") in {"error", "interrupted"}
-                    and (row.get("meta") or {}).get("recover_outputs_available")
-                )
-            )
-        )
+        recoverable = sum(1 for row in jobs if has_recoverable_outputs(row))
+        remote_preserved = sum(1 for row in jobs if remote_kernel_is_preserved(row))
         if waiting_auth:
             lines.append(f"⚠️ {waiting_auth} job(s) attendent l'authentification.")
         if recoverable:
