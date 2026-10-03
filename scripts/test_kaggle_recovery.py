@@ -1,8 +1,10 @@
 from kaggle_app.kaggle_recovery import (
     MAX_AUTO_RECOVERY_ATTEMPTS,
     auto_recovery_attempts,
+    classify_remote_recovery_failure,
     has_recoverable_outputs,
     keep_remote_kernel_for_retry,
+    preserve_kernel_after_execute_failure,
     recoverable_output_candidate,
     recovery_marked,
     remote_kernel_is_preserved,
@@ -116,3 +118,46 @@ assert recovery_marked(marked_without_kernel) is True
 assert has_recoverable_outputs(marked_without_kernel) is False
 
 print("Kaggle recovery marker semantics passed.")
+
+
+assert classify_remote_recovery_failure(
+    auth_required=True,
+    missing_remote=False,
+    remote_failed=False,
+) == ("waiting_auth", True, "auth_required", False)
+
+assert classify_remote_recovery_failure(
+    auth_required=False,
+    missing_remote=True,
+    remote_failed=False,
+) == ("error", False, "remote_missing", False)
+
+assert classify_remote_recovery_failure(
+    auth_required=False,
+    missing_remote=False,
+    remote_failed=True,
+) == ("error", False, "remote_failed", True)
+
+assert classify_remote_recovery_failure(
+    auth_required=False,
+    missing_remote=False,
+    remote_failed=False,
+) == ("error", True, "downloading", False)
+
+assert preserve_kernel_after_execute_failure(
+    kernel_ref="u/k",
+    failed_phase="running",
+    remote_failed=False,
+) is True
+assert preserve_kernel_after_execute_failure(
+    kernel_ref="u/k",
+    failed_phase="preparing",
+    remote_failed=False,
+) is False
+assert preserve_kernel_after_execute_failure(
+    kernel_ref="u/k",
+    failed_phase="running",
+    remote_failed=True,
+) is False
+
+print("Kaggle recovery failure classification tests passed.")
