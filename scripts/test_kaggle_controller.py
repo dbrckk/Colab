@@ -283,7 +283,7 @@ for token in [
     "def run_image_edit()",
     "def run_video_faceswap()",
     "def load_qwen_models(",
-    "WORKER_VERSION = \"1.2\"",
+    "WORKER_VERSION = \"1.3\"",
     "--negative-prompt",
     "--llm_vision",
 ]:
