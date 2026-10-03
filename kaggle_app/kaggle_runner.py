@@ -204,6 +204,15 @@ class KaggleController:
             )
 
         output_manifest = data.get("output_manifest") or []
+        worker_version = str(data.get("worker_version") or "")
+        try:
+            worker_version_tuple = tuple(int(x) for x in worker_version.split("."))
+        except ValueError:
+            worker_version_tuple = ()
+        if worker_version_tuple >= (1, 3) and declared_files and not output_manifest:
+            raise RuntimeError(
+                "Manifest SHA-256 absent: le worker v1.3+ doit signer tous les fichiers générés."
+            )
         for entry in output_manifest:
             name = Path(str(entry.get("name") or "")).name
             path = artifact_by_name.get(name)
