@@ -87,3 +87,33 @@ def remote_kernel_is_preserved(row: dict[str, Any]) -> bool:
         status in RECOVERABLE_ERROR_STATES
         and (row.get("meta") or {}).get("recover_outputs_available")
     )
+
+
+def classify_remote_recovery_failure(
+    *,
+    auth_required: bool,
+    missing_remote: bool,
+    remote_failed: bool,
+) -> tuple[str, bool, str, bool]:
+    if auth_required:
+        return "waiting_auth", True, "auth_required", False
+    if missing_remote:
+        return "error", False, "remote_missing", False
+    if remote_failed:
+        return "error", False, "remote_failed", True
+    return "error", True, "downloading", False
+
+
+def preserve_kernel_after_execute_failure(
+    *,
+    kernel_ref: str,
+    failed_phase: str,
+    remote_failed: bool,
+) -> bool:
+    return bool(
+        kernel_ref
+        and failed_phase in {
+            "submitting", "queued", "running", "downloading", "recovering",
+        }
+        and not remote_failed
+    )
