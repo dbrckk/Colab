@@ -177,6 +177,19 @@ class JobDB:
         return [dict(r) for r in rows]
 
 
+    def delete_artifacts_by_ids(self, ids: list[int]) -> int:
+        clean = [int(x) for x in ids if int(x) > 0]
+        if not clean:
+            return 0
+        placeholders = ",".join("?" for _ in clean)
+        with _LOCK, self._conn() as con:
+            cur = con.execute(
+                f"DELETE FROM artifacts WHERE id IN ({placeholders})",
+                clean,
+            )
+            con.commit()
+            return int(cur.rowcount or 0)
+
     def vacuum(self) -> None:
         with _LOCK, self._conn() as con:
             con.execute("VACUUM")
