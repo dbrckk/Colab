@@ -281,8 +281,19 @@ def _refresh(job_id):
             details.append(f"steps={result_manifest.get('steps')}")
         if result_manifest.get("worker_version"):
             details.append(f"worker={result_manifest.get('worker_version')}")
+        output_manifest = result_manifest.get("output_manifest") or []
+        if output_manifest:
+            details.append(f"SHA-256 vérifié={len(output_manifest)} fichier(s)")
         if details:
             status += "\nRésultat : " + " • ".join(details)
+        if output_manifest:
+            fingerprints = []
+            for entry in output_manifest[:4]:
+                name = str(entry.get("name") or "?")
+                digest = str(entry.get("sha256") or "")
+                size = int(entry.get("size") or 0)
+                fingerprints.append(f"{name}: {digest[:12]}… ({size / (1024**2):.1f} Mo)")
+            status += "\nIntégrité : " + " • ".join(fingerprints)
     position = controller.queue_position(job_id)
     if position is not None:
         status += f"\nPosition file locale : {position}"
