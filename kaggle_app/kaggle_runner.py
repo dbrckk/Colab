@@ -277,6 +277,14 @@ class KaggleController:
                     )
         return data
 
+    @staticmethod
+    def _remote_kernel_missing(exc: Exception) -> bool:
+        text = str(exc).lower()
+        return any(token in text for token in (
+            "404", "not found", "does not exist", "could not find",
+            "kernel not found", "no such kernel",
+        ))
+
     def _recover_remote_job(self, job_id: str) -> None:
         job = self.db.get_job(job_id)
         if not job:
@@ -361,14 +369,19 @@ class KaggleController:
             else:
                 current = self.db.get_job(job_id) or job
                 current_meta = current.get("meta") or {}
+                missing_remote = self._remote_kernel_missing(exc)
                 self.db.update_job(
                     job_id,
                     status="error",
-                    error=f"Recovery {type(exc).__name__}: {exc}",
+                    error=(
+                        "Kernel Kaggle supprimé ou introuvable; utilise Relancer pour recalculer."
+                        if missing_remote
+                        else f"Recovery {type(exc).__name__}: {exc}"
+                    ),
                     meta_json={
                         **current_meta,
-                        "recover_outputs_available": True,
-                        "failed_phase": "downloading",
+                        "recover_outputs_available": not missing_remote,
+                        "failed_phase": ("remote_missing" if missing_remote else "downloading"),
                     },
                 )
         finally:
