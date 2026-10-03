@@ -19,10 +19,12 @@ from typing import Any
 from .config import SETTINGS, Settings
 from .db import JobDB
 from .kaggle_auth import (
+    CREDENTIAL_KEYS,
     auth_cache_valid,
     credential_fingerprint,
     credentials_ready as auth_credentials_ready,
     validate_credential_fields,
+    write_credential_env,
 )
 from .kaggle_protocol import (
     is_auth_cli_error,
@@ -523,8 +525,7 @@ class KaggleController:
 
         validate_credential_fields(username, api_token, legacy_key)
 
-        credential_keys = ("KAGGLE_USERNAME", "KAGGLE_API_TOKEN", "KAGGLE_KEY")
-        previous_env = {key: os.environ.get(key) for key in credential_keys}
+        previous_env = {key: os.environ.get(key) for key in CREDENTIAL_KEYS}
 
         def _restore_previous_env() -> None:
             for key, value in previous_env.items():
@@ -550,39 +551,12 @@ class KaggleController:
             }
 
             if persist:
-                env_path = self.settings.env_file
-                preserved = []
-                credential_key_set = set(credential_keys)
-                if env_path.exists():
-                    for line in env_path.read_text(encoding="utf-8").splitlines():
-                        stripped = line.strip()
-                        key = stripped.split("=", 1)[0].strip() if "=" in stripped else ""
-                        if key not in credential_key_set:
-                            preserved.append(line)
-                lines = preserved + [f"KAGGLE_USERNAME={username}"]
-                if api_token:
-                    lines.append(f"KAGGLE_API_TOKEN={api_token}")
-                else:
-                    lines.append(f"KAGGLE_KEY={legacy_key}")
-                env_path.parent.mkdir(parents=True, exist_ok=True)
-                payload = "\n".join(lines).rstrip() + "\n"
-                tmp_env = env_path.with_name(f".{env_path.name}.{uuid.uuid4().hex[:8]}.part")
-                try:
-                    tmp_env.write_text(payload, encoding="utf-8")
-                    try:
-                        os.chmod(tmp_env, 0o600)
-                    except Exception:
-                        pass
-                    os.replace(tmp_env, env_path)
-                    try:
-                        os.chmod(env_path, 0o600)
-                    except Exception:
-                        pass
-                finally:
-                    try:
-                        tmp_env.unlink(missing_ok=True)
-                    except OSError:
-                        pass
+                write_credential_env(
+                    self.settings.env_file,
+                    username=username,
+                    api_token=api_token,
+                    legacy_key=legacy_key,
+                )
         except Exception:
             _restore_previous_env()
             raise
