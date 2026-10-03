@@ -215,7 +215,7 @@ with tempfile.TemporaryDirectory() as td:
         )
         second = KaggleController(settings)
         second.executor.shutdown(wait=True)
-        assert second.db.get_job("stale-prep")["status"] == "resumed-local-test"
+        assert second.db.get_job("stale-prep")["status"] == "waiting_auth"
         assert second.db.get_job("remote-running")["status"] == "recovered-test"
     finally:
         KaggleController._recover_remote_job = original_recover
