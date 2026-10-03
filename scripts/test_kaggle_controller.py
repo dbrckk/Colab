@@ -1603,12 +1603,6 @@ with tempfile.TemporaryDirectory() as td:
     controller.executor.shutdown(wait=False)
 
 print("Export SHA-256 manifest validation passed.")
-, worker_source, _re.MULTILINE)
-assert _version_match, "Missing or malformed WORKER_VERSION"
-assert tuple(int(x) for x in _version_match.group(1).split(".")) >= (1, 3)
-print("Kaggle worker syntax validation passed.")
-
-
 with tempfile.TemporaryDirectory() as td:
     tmp = Path(td)
     settings = Settings(
