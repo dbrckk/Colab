@@ -1121,6 +1121,54 @@ class KaggleController:
             self._futures[job_id] = self.executor.submit(self._recover_remote_job, job_id)
         return "Récupération des outputs Kaggle relancée sans recalcul GPU."
 
+    def reconcile_completed_jobs(self) -> tuple[int, int]:
+        checked = 0
+        recoverable = 0
+        for row in self.db.list_jobs(100000):
+            if row.get("status") != "done":
+                continue
+            checked += 1
+            artifacts = self.db.artifacts(row["id"])
+            valid_media = [
+                a for a in artifacts
+                if a.get("kind") in {"image", "video"}
+                and Path(a.get("path") or "").is_file()
+            ]
+            if valid_media:
+                continue
+            kernel_ref = row.get("kernel_ref") or ""
+            if not kernel_ref:
+                self.db.update_job(
+                    row["id"],
+                    status="error",
+                    error="Résultats locaux manquants et aucun kernel Kaggle n'est disponible pour récupération.",
+                )
+                continue
+            try:
+                state, _ = self._kernel_status(kernel_ref)
+            except Exception:
+                state = "unknown"
+            if state == "complete":
+                meta = row.get("meta") or {}
+                self.db.update_job(
+                    row["id"],
+                    status="error",
+                    error="Résultats locaux manquants; outputs Kaggle encore disponibles.",
+                    meta_json={
+                        **meta,
+                        "recover_outputs_available": True,
+                        "failed_phase": "local_artifacts_missing",
+                    },
+                )
+                recoverable += 1
+            elif state == "error":
+                self.db.update_job(
+                    row["id"],
+                    status="error",
+                    error="Résultats locaux manquants et le kernel Kaggle n'est plus récupérable.",
+                )
+        return checked, recoverable
+
     def reconcile_artifacts(self) -> tuple[int, int]:
         stale_ids: list[int] = []
         checked = 0
@@ -1168,6 +1216,7 @@ class KaggleController:
         gc_files, gc_bytes = self._gc_input_store()
         reclaimed += gc_bytes
         _, stale_artifacts = self.reconcile_artifacts()
+        _, recoverable_jobs = self.reconcile_completed_jobs()
 
         try:
             self.db.vacuum()
@@ -1184,7 +1233,8 @@ class KaggleController:
             f"Nettoyage terminé • {removed_exports} export(s) ancien(s) • "
             f"{removed_inputs} dossier(s) d'entrée orphelin(s) • "
             f"{gc_files} source(s) partagée(s) non référencée(s) • "
-            f"{stale_artifacts} artefact(s) DB obsolète(s) • {amount} libéré(s)."
+            f"{stale_artifacts} artefact(s) DB obsolète(s) • "
+            f"{recoverable_jobs} job(s) récupérable(s) détecté(s) • {amount} libéré(s)."
         )
 
     def dashboard_summary(self) -> str:
