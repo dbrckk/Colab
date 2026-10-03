@@ -42,6 +42,7 @@ from .kaggle_jobs import (
     needs_dataset,
 )
 from .kaggle_kernel import write_kernel_bundle
+from .kaggle_monitor import wait_for_kernel
 from .kaggle_outputs import validate_downloaded_outputs
 from .kaggle_recovery import (
     auto_recovery_attempts,
@@ -200,26 +201,29 @@ class KaggleController:
         try:
             self.validate_current_credentials()
             self.db.update_job(job_id, status="recovering")
-            started = time.time()
-            while True:
-                self._check_cancelled(job_id)
-                if time.time() - started > self.settings.kernel_timeout + 1200:
-                    raise TimeoutError("Délai maximal dépassé pendant la récupération Kaggle.")
-                state, raw = self._kernel_status(kernel_ref)
-                self.db.update_job(
+            wait_for_kernel(
+                kernel_ref,
+                kernel_timeout=self.settings.kernel_timeout,
+                poll_seconds=self.settings.poll_seconds,
+                check_cancelled=lambda: self._check_cancelled(job_id),
+                kernel_status=self._kernel_status,
+                on_status=lambda state, raw: self.db.update_job(
                     job_id,
                     status=("recovering" if state in {"queued", "running"} else state),
-                    meta_json={**meta, "dataset_ref": dataset_ref, "kaggle_status": raw[-1500:]},
-                )
-                if state == "complete":
-                    break
-                if state == "error":
-                    try:
-                        logs = self._run(["kernels", "logs", kernel_ref], timeout=180)
-                    except Exception:
-                        logs = raw
-                    raise RemoteKernelFailed("Le job Kaggle récupéré a échoué:\n" + logs[-7000:])
-                time.sleep(max(5, self.settings.poll_seconds))
+                    meta_json={
+                        **meta,
+                        "dataset_ref": dataset_ref,
+                        "kaggle_status": raw[-1500:],
+                    },
+                ),
+                fetch_logs=lambda ref: self._run(["kernels", "logs", ref], timeout=180),
+                failure_factory=lambda logs: RemoteKernelFailed(
+                    "Le job Kaggle récupéré a échoué:\n" + logs[-7000:]
+                ),
+                timeout_message="Délai maximal dépassé pendant la récupération Kaggle.",
+                now=time.time,
+                sleep=time.sleep,
+            )
 
             with tempfile.TemporaryDirectory(prefix=f"qwen-kaggle-recover-{job_id}-") as td:
                 download = Path(td) / "download"
@@ -1018,9 +1022,31 @@ class KaggleController:
                         raise push_exc
                 self.db.update_job(job_id, status="queued")
 
-                started = time.time()
-                while True:
-                    self._check_cancelled(job_id)
+                wait_for_kernel(
+                    kernel_ref,
+                    kernel_timeout=self.settings.kernel_timeout,
+                    poll_seconds=self.settings.poll_seconds,
+                    check_cancelled=lambda: self._check_cancelled(job_id),
+                    kernel_status=self._kernel_status,
+                    on_status=lambda state, raw: self.db.update_job(
+                        job_id,
+                        status=state,
+                        meta_json={
+                            **job.get("meta", {}),
+                            "dataset_ref": dataset_ref,
+                            "kaggle_status": raw[-1500:],
+                        },
+                    ),
+                    fetch_logs=lambda ref: self._run(["kernels", "logs", ref], timeout=180),
+                    failure_factory=lambda logs: RemoteKernelFailed(
+                        "Kaggle a signalé une erreur:\n" + logs[-7000:]
+                    ),
+                    timeout_message="Le job Kaggle a dépassé le délai maximal.",
+                    now=time.time,
+                    sleep=time.sleep,
+                )
+
+                self._check_cancelled(job_id)
                     if time.time() - started > self.settings.kernel_timeout + 1200:
                         raise TimeoutError("Le job Kaggle a dépassé le délai maximal.")
                     state, raw = self._kernel_status(kernel_ref)
