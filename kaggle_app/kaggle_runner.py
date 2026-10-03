@@ -96,8 +96,15 @@ class KaggleController:
                         error="En attente des identifiants Kaggle pour reprendre la préparation locale.",
                     )
             elif status in recoverable and kernel_ref:
-                with self._lock:
-                    self._futures[job_id] = self.executor.submit(self._recover_remote_job, job_id)
+                if self.credentials_ready():
+                    with self._lock:
+                        self._futures[job_id] = self.executor.submit(self._recover_remote_job, job_id)
+                else:
+                    self.db.update_job(
+                        job_id,
+                        status="waiting_auth",
+                        error="En attente des identifiants Kaggle pour reprendre le kernel distant existant.",
+                    )
             elif status in recoverable and not kernel_ref:
                 # A crash can happen between setting "submitting" and saving
                 # kernel_ref. Replaying preparation is safer than leaving a
@@ -135,6 +142,13 @@ class KaggleController:
                         status="waiting_auth",
                         error="En attente des identifiants Kaggle pour reprendre la file locale.",
                     )
+            elif status == "waiting_auth" and kernel_ref:
+                if self.credentials_ready():
+                    self.db.update_job(job_id, status="recovering", error="")
+                    with self._lock:
+                        self._futures[job_id] = self.executor.submit(
+                            self._recover_remote_job, job_id
+                        )
             elif status in {"error", "interrupted"} and kernel_ref:
                 meta = row.get("meta") or {}
                 if not meta.get("recover_outputs_available"):
@@ -421,8 +435,15 @@ class KaggleController:
                 future = self._futures.get(job_id)
                 if future is not None and not future.done():
                     continue
-                self.db.update_job(job_id, status="queued", error="")
-                self._futures[job_id] = self.executor.submit(self._execute, job_id)
+                kernel_ref = row.get("kernel_ref") or ""
+                if kernel_ref:
+                    self.db.update_job(job_id, status="recovering", error="")
+                    self._futures[job_id] = self.executor.submit(
+                        self._recover_remote_job, job_id
+                    )
+                else:
+                    self.db.update_job(job_id, status="queued", error="")
+                    self._futures[job_id] = self.executor.submit(self._execute, job_id)
                 resumed += 1
         return resumed
 
