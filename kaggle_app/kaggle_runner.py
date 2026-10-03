@@ -535,6 +535,16 @@ class KaggleController:
             return ""
         return hashlib.sha256(f"{username}\0{secret}".encode("utf-8")).hexdigest()
 
+    def credentials_recently_validated(self, max_age_seconds: int = 300) -> bool:
+        fingerprint = self._credential_fingerprint()
+        if not fingerprint:
+            return False
+        return bool(
+            self._auth_cache.get("fingerprint") == fingerprint
+            and time.time() - float(self._auth_cache.get("ts") or 0)
+            <= max(0, int(max_age_seconds))
+        )
+
     def validate_current_credentials(self, max_age_seconds: int = 300) -> None:
         if not self.credentials_ready():
             raise RuntimeError(
@@ -1720,7 +1730,12 @@ class KaggleController:
         else:
             storage = f"{total_bytes / 1024**2:.1f} Mo"
 
-        auth = "Kaggle prêt" if self.credentials_ready() else "Kaggle à configurer"
+        if self.credentials_recently_validated():
+            auth = "Kaggle prêt"
+        elif self.credentials_ready():
+            auth = "Kaggle configuré — à valider"
+        else:
+            auth = "Kaggle à configurer"
         return (
             f"**{auth}**  •  "
             f"Actifs **{active}**  •  Terminés **{done}**  •  "
