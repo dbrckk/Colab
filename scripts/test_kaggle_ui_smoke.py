@@ -28,3 +28,11 @@ finally:
     ui.controller.job = original_job
 
 print("Kaggle Studio UI smoke test passed.")
+
+
+assert "Authentification Kaggle" in ui._friendly_error("403 Forbidden")
+assert "Limite/quota Kaggle" in ui._friendly_error("429 Too Many Requests")
+assert "Timeout" in ui._friendly_error("kernel timeout")
+assert "Entrée invalide" in ui._friendly_error("Image source illisible")
+assert "Worker Kaggle" in ui._friendly_error("result.json illisible")
+print("friendly error classification passed.")
