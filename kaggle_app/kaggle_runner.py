@@ -131,6 +131,27 @@ class KaggleController:
                         status="waiting_auth",
                         error="En attente des identifiants Kaggle pour reprendre la file locale.",
                     )
+            elif status in {"error", "interrupted"} and kernel_ref:
+                meta = row.get("meta") or {}
+                if not meta.get("recover_outputs_available"):
+                    continue
+                attempts = int(meta.get("auto_recovery_attempts") or 0)
+                if attempts >= 3:
+                    continue
+                if not self.credentials_ready():
+                    continue
+                self.db.update_job(
+                    job_id,
+                    status="recovering",
+                    error="",
+                    meta_json={
+                        **meta,
+                        "auto_recovery_attempts": attempts + 1,
+                        "last_auto_recovery_at": time.time(),
+                    },
+                )
+                with self._lock:
+                    self._futures[job_id] = self.executor.submit(self._recover_remote_job, job_id)
 
     def _media_integrity_ok(self, path: Path, kind: str) -> bool:
         try:
@@ -327,6 +348,7 @@ class KaggleController:
                         **final_meta,
                         "recover_outputs_available": False,
                         "failed_phase": "",
+                        "auto_recovery_attempts": 0,
                     },
                 )
                 self._storage_cache["ts"] = 0.0
