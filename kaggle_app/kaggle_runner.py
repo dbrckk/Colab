@@ -562,6 +562,16 @@ class KaggleController:
         if not re.fullmatch(r"[A-Za-z0-9_.-]+", username):
             raise ValueError("KAGGLE_USERNAME contient des caractères non valides.")
 
+        credential_keys = ("KAGGLE_USERNAME", "KAGGLE_API_TOKEN", "KAGGLE_KEY")
+        previous_env = {key: os.environ.get(key) for key in credential_keys}
+
+        def _restore_previous_env() -> None:
+            for key, value in previous_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
         os.environ["KAGGLE_USERNAME"] = username
         if api_token:
             os.environ["KAGGLE_API_TOKEN"] = api_token
@@ -570,42 +580,48 @@ class KaggleController:
             os.environ["KAGGLE_KEY"] = legacy_key
             os.environ.pop("KAGGLE_API_TOKEN", None)
 
-        if persist:
-            env_path = self.settings.env_file
-            credential_keys = {"KAGGLE_USERNAME", "KAGGLE_API_TOKEN", "KAGGLE_KEY"}
-            preserved = []
-            if env_path.exists():
-                for line in env_path.read_text(encoding="utf-8").splitlines():
-                    stripped = line.strip()
-                    key = stripped.split("=", 1)[0].strip() if "=" in stripped else ""
-                    if key not in credential_keys:
-                        preserved.append(line)
-            lines = preserved + [f"KAGGLE_USERNAME={username}"]
-            if api_token:
-                lines.append(f"KAGGLE_API_TOKEN={api_token}")
-            else:
-                lines.append(f"KAGGLE_KEY={legacy_key}")
-            env_path.parent.mkdir(parents=True, exist_ok=True)
-            payload = "\n".join(lines).rstrip() + "\n"
-            tmp_env = env_path.with_name(f".{env_path.name}.{uuid.uuid4().hex[:8]}.part")
-            try:
-                tmp_env.write_text(payload, encoding="utf-8")
-                try:
-                    os.chmod(tmp_env, 0o600)
-                except Exception:
-                    pass
-                os.replace(tmp_env, env_path)
-                try:
-                    os.chmod(env_path, 0o600)
-                except Exception:
-                    pass
-            finally:
-                try:
-                    tmp_env.unlink(missing_ok=True)
-                except OSError:
-                    pass
+        try:
+            # Validate the candidate credentials before changing persistent state.
+            self._run(["kernels", "list", "-m", "-p", "1"], timeout=120)
 
-        self._run(["kernels", "list", "-m", "-p", "1"], timeout=120)
+            if persist:
+                env_path = self.settings.env_file
+                preserved = []
+                credential_key_set = set(credential_keys)
+                if env_path.exists():
+                    for line in env_path.read_text(encoding="utf-8").splitlines():
+                        stripped = line.strip()
+                        key = stripped.split("=", 1)[0].strip() if "=" in stripped else ""
+                        if key not in credential_key_set:
+                            preserved.append(line)
+                lines = preserved + [f"KAGGLE_USERNAME={username}"]
+                if api_token:
+                    lines.append(f"KAGGLE_API_TOKEN={api_token}")
+                else:
+                    lines.append(f"KAGGLE_KEY={legacy_key}")
+                env_path.parent.mkdir(parents=True, exist_ok=True)
+                payload = "\n".join(lines).rstrip() + "\n"
+                tmp_env = env_path.with_name(f".{env_path.name}.{uuid.uuid4().hex[:8]}.part")
+                try:
+                    tmp_env.write_text(payload, encoding="utf-8")
+                    try:
+                        os.chmod(tmp_env, 0o600)
+                    except Exception:
+                        pass
+                    os.replace(tmp_env, env_path)
+                    try:
+                        os.chmod(env_path, 0o600)
+                    except Exception:
+                        pass
+                finally:
+                    try:
+                        tmp_env.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+        except Exception:
+            _restore_previous_env()
+            raise
+
         resumed = self.resume_waiting_jobs()
         recovered = self.resume_recoverable_outputs()
         mode = "API token" if api_token else "legacy key"
