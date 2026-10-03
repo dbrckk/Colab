@@ -207,22 +207,29 @@ with tempfile.TemporaryDirectory() as td:
 
     original_recover = KaggleController._recover_remote_job
     original_execute = KaggleController._execute
+    recovered = []
+    executed = []
+    old_values = {key: os.environ.pop(key, None) for key in (
+        "KAGGLE_USERNAME", "KAGGLE_API_TOKEN", "KAGGLE_KEY"
+    )}
     try:
-        KaggleController._recover_remote_job = (
-            lambda self, job_id: self.db.update_job(job_id, status="recovered-test")
-        )
-        KaggleController._execute = (
-            lambda self, job_id: self.db.update_job(job_id, status="resumed-local-test")
-        )
+        KaggleController._recover_remote_job = lambda self, job_id: recovered.append(job_id)
+        KaggleController._execute = lambda self, job_id: executed.append(job_id)
         second = KaggleController(settings)
         second.executor.shutdown(wait=True)
         assert second.db.get_job("stale-prep")["status"] == "waiting_auth"
-        assert second.db.get_job("remote-running")["status"] == "recovered-test"
+        assert second.db.get_job("remote-running")["status"] == "waiting_auth"
+        assert second.db.get_job("remote-running")["kernel_ref"] == "ci-user/kernel"
+        assert recovered == []
+        assert executed == []
     finally:
         KaggleController._recover_remote_job = original_recover
         KaggleController._execute = original_execute
+        for key, value in old_values.items():
+            if value is not None:
+                os.environ[key] = value
 
-print("Controller restart recovery validation passed.")
+print("Controller restart waits safely for authentication passed.")
 
 
 with tempfile.TemporaryDirectory() as td:
