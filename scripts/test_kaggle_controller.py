@@ -4171,3 +4171,43 @@ with tempfile.TemporaryDirectory() as td:
                 os.environ[key] = value
 
 print("Kaggle configured-vs-validated status labeling passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root, storage_root=tmp / "media", db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local", worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1, cli_retries=1, kernel_timeout=60, accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False, delete_remote_dataset=True,
+        keep_job_inputs=False, keep_source_inputs_for_retry=True, share_gradio=False,
+    )
+    old_values = {key: os.environ.get(key) for key in (
+        "KAGGLE_USERNAME", "KAGGLE_API_TOKEN", "KAGGLE_KEY"
+    )}
+    os.environ["KAGGLE_USERNAME"] = "health-user"
+    os.environ["KAGGLE_API_TOKEN"] = "health-token"
+    os.environ.pop("KAGGLE_KEY", None)
+    controller = KaggleController(settings)
+    controller._run = lambda *args, **kwargs: "ok"
+    try:
+        assert controller.credentials_recently_validated() is False
+        report = controller.health_check()
+        assert "Authentification Kaggle valide" in report
+        assert controller.credentials_recently_validated() is True
+
+        controller._run = lambda *args, **kwargs: (_ for _ in ()).throw(
+            RuntimeError("401 Unauthorized")
+        )
+        report = controller.health_check()
+        assert "Authentification Kaggle" in report and "401 Unauthorized" in report
+        assert controller.credentials_recently_validated() is False
+    finally:
+        controller.executor.shutdown(wait=False)
+        for key, value in old_values.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+print("Kaggle health check refreshes and invalidates auth readiness cache.")
