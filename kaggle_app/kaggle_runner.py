@@ -246,7 +246,17 @@ class KaggleController:
                         self.db.add_artifact(job_id, str(path), kind)
                 if not artifacts and not self.db.artifacts(job_id):
                     raise RuntimeError("Aucun output Kaggle récupérable.")
-                self.db.update_job(job_id, status="done", error="")
+                final_meta = (self.db.get_job(job_id) or job).get("meta") or {}
+                self.db.update_job(
+                    job_id,
+                    status="done",
+                    error="",
+                    meta_json={
+                        **final_meta,
+                        "recover_outputs_available": False,
+                        "failed_phase": "",
+                    },
+                )
                 self._storage_cache["ts"] = 0.0
                 self._cleanup_inputs(job_id)
         except JobCancelled:
@@ -255,13 +265,32 @@ class KaggleController:
             if self.is_cancelled(job_id):
                 self.db.update_job(job_id, status="cancelled", error="")
             else:
+                current = self.db.get_job(job_id) or job
+                current_meta = current.get("meta") or {}
                 self.db.update_job(
                     job_id,
                     status="error",
                     error=f"Recovery {type(exc).__name__}: {exc}",
+                    meta_json={
+                        **current_meta,
+                        "recover_outputs_available": True,
+                        "failed_phase": "downloading",
+                    },
                 )
         finally:
-            self._cleanup_remote_refs(kernel_ref, dataset_ref)
+            current = self.db.get_job(job_id) or {}
+            current_meta = current.get("meta") or {}
+            keep_for_retry = bool(
+                current.get("status") == "error"
+                and current_meta.get("recover_outputs_available")
+                and kernel_ref
+            )
+            if keep_for_retry:
+                # The completed kernel is the recovery source. Keep it across
+                # controller restarts and repeated download attempts.
+                self._cleanup_remote_refs("", dataset_ref)
+            else:
+                self._cleanup_remote_refs(kernel_ref, dataset_ref)
             with self._lock:
                 self._cancelled.discard(job_id)
 
@@ -1038,6 +1067,11 @@ class KaggleController:
             raise ValueError("Ce job n'a pas de kernel Kaggle à récupérer.")
         if job.get("status") not in {"error", "interrupted"}:
             raise ValueError("La récupération manuelle est réservée aux jobs en erreur/interrompus.")
+        meta = job.get("meta") or {}
+        if not meta.get("recover_outputs_available"):
+            raise ValueError(
+                "Ce job ne possède pas d'outputs Kaggle conservés. Utilise Relancer pour recalculer."
+            )
         with self._lock:
             future = self._futures.get(job_id)
             if future is not None and not future.done():
