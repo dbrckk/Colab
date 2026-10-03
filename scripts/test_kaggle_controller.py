@@ -3045,3 +3045,54 @@ with tempfile.TemporaryDirectory() as td:
     controller.executor.shutdown(wait=False)
 
 print("Remote cleanup on local deletion passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root, storage_root=tmp / "media", db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local", worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1, cli_retries=1, kernel_timeout=60, accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False, recovery_retention_days=7,
+        keep_job_inputs=False, keep_source_inputs_for_retry=True, share_gradio=False,
+    )
+    old_user = os.environ.pop("KAGGLE_USERNAME", None)
+    old_token = os.environ.pop("KAGGLE_API_TOKEN", None)
+    old_key = os.environ.pop("KAGGLE_KEY", None)
+    try:
+        controller = KaggleController(settings)
+        controller.db.create_job("login-recover", "image", "x", {
+            "recover_outputs_available": True, "auto_recovery_attempts": 0,
+        })
+        controller.db.update_job(
+            "login-recover", status="error", kernel_ref="ci-user/complete",
+        )
+        recovered_ids = []
+        original_recover = controller._recover_remote_job
+        controller._recover_remote_job = lambda job_id: recovered_ids.append(job_id)
+        os.environ["KAGGLE_USERNAME"] = "ci-user"
+        os.environ["KAGGLE_API_TOKEN"] = "ci-token"
+        count = controller.resume_recoverable_outputs()
+        controller.executor.shutdown(wait=True)
+        row = controller.db.get_job("login-recover")
+        assert count == 1
+        assert recovered_ids == ["login-recover"]
+        assert row["status"] == "recovering"
+        assert row["meta"]["auto_recovery_attempts"] == 1
+        assert row["meta"]["last_auto_recovery_at"] > 0
+        controller._recover_remote_job = original_recover
+    finally:
+        if old_user is None:
+            os.environ.pop("KAGGLE_USERNAME", None)
+        else:
+            os.environ["KAGGLE_USERNAME"] = old_user
+        if old_token is None:
+            os.environ.pop("KAGGLE_API_TOKEN", None)
+        else:
+            os.environ["KAGGLE_API_TOKEN"] = old_token
+        if old_key is None:
+            os.environ.pop("KAGGLE_KEY", None)
+        else:
+            os.environ["KAGGLE_KEY"] = old_key
+
+print("Credential-time output recovery resume passed.")
