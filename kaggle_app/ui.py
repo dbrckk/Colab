@@ -49,10 +49,10 @@ def _friendly_error(error):
         return "Limite/quota Kaggle — attends puis relance le job."
     if any(x in low for x in ("timeout", "timed out", "délai maximal")):
         return "Timeout — Kaggle ou le worker a dépassé le délai prévu. Une relance est possible."
-    if any(x in low for x in ("introuvable", "illisible", "invalide", "requiert", "prompt est vide")):
-        return "Entrée invalide — corrige le prompt ou le média source avant de relancer."
     if "worker" in low or "result.json" in low or "sans média" in low:
         return "Worker Kaggle — consulte les logs du job pour le détail technique."
+    if any(x in low for x in ("introuvable", "illisible", "invalide", "requiert", "prompt est vide")):
+        return "Entrée invalide — corrige le prompt ou le média source avant de relancer."
     return raw[-500:]
 
 def _task_help(task):
