@@ -242,6 +242,12 @@ def _delete_job(job_id):
     except Exception as e:
         raise gr.Error(str(e))
 
+def _recover_outputs(job_id):
+    try:
+        return controller.recover_outputs(job_id), _jobs_table()
+    except Exception as e:
+        raise gr.Error(_friendly_error(e))
+
 def _cancel_job(job_id):
     try:
         return controller.cancel(job_id), _jobs_table()
@@ -340,6 +346,7 @@ def build_ui():
                     with gr.Row():
                         refresh = gr.Button("↻ Actualiser")
                         retry = gr.Button("↻ Relancer")
+                        recover_outputs_btn = gr.Button("⬇ Récupérer sans recalcul")
                         cancel = gr.Button("⛔ Annuler le job", variant="stop")
                     gallery = gr.Gallery(label="Images récupérées", columns=2, height=420)
                     video = gr.Video(label="Vidéo récupérée")
@@ -390,6 +397,7 @@ def build_ui():
                 open_job = gr.Button("Ouvrir le job", variant="primary")
                 load_form_btn = gr.Button("↙ Charger dans Générer")
                 retry_job_btn = gr.Button("↻ Relancer le job")
+                recover_lib_btn = gr.Button("⬇ Récupérer sans recalcul")
                 logs_btn = gr.Button("📜 Logs Kaggle")
                 export_job_btn = gr.Button("📦 Export ZIP")
                 delete_job_btn = gr.Button("🗑 Supprimer localement", variant="stop")
@@ -434,6 +442,7 @@ def build_ui():
             [batch_ids, submit_info, jobs],
         )
         refresh.click(_refresh, [job_id], [status, gallery, video, files, jobs])
+        recover_outputs_btn.click(_recover_outputs, [job_id], [submit_info, jobs])
         retry.click(_retry_job, [job_id], [job_id, submit_info, jobs])
         cancel.click(_cancel_job, [job_id], [submit_info, jobs])
         reload_jobs.click(_jobs_table, [], [jobs])
@@ -451,6 +460,7 @@ def build_ui():
             [task, prompt, negative, steps, cfg, seed, aspect, source, target, batch_prompts, submit_info],
         )
         retry_job_btn.click(_retry_job, [lookup], [lookup, lib_status, jobs])
+        recover_lib_btn.click(_recover_outputs, [lookup], [lib_status, jobs])
         logs_btn.click(_remote_logs, [lookup], [lib_logs])
         export_job_btn.click(_export_job, [lookup], [lib_export])
         delete_job_btn.click(_delete_job, [lookup], [lib_status, jobs])
