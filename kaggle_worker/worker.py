@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import base64
 import os
 import random
@@ -13,7 +14,7 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-WORKER_VERSION = "1.2"
+WORKER_VERSION = "1.3"
 WORK = Path("/kaggle/working")
 OUT = WORK / "outputs"
 OUT.mkdir(parents=True, exist_ok=True)
@@ -37,7 +38,28 @@ def pip_install(*packages: str):
         timeout=1800,
     )
 
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+def _output_manifest(files) -> list[dict]:
+    manifest = []
+    for name in files or []:
+        path = OUT / str(name)
+        if not path.is_file():
+            continue
+        manifest.append({
+            "name": path.name,
+            "size": int(path.stat().st_size),
+            "sha256": _sha256_file(path),
+        })
+    return manifest
+
 def write_result(status: str, **extra):
+    files = extra.get("files") or []
     payload = {
         "job_id": CONFIG.get("job_id"),
         "status": status,
@@ -45,6 +67,7 @@ def write_result(status: str, **extra):
         "worker_version": WORKER_VERSION,
         "generated_at": __import__("time").strftime("%Y-%m-%d %H:%M:%S"),
         **extra,
+        "output_manifest": _output_manifest(files),
     }
     (OUT / "result.json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2),
