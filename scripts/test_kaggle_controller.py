@@ -1309,3 +1309,28 @@ with tempfile.TemporaryDirectory() as td:
     controller.executor.shutdown(wait=False)
 
 print("Repeated output recovery retention passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root, storage_root=tmp / "media", db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local", worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1, cli_retries=1, kernel_timeout=60, accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False, keep_job_inputs=False,
+        keep_source_inputs_for_retry=True, share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    controller.db.create_job("no-recovery-source", "image", "x", {})
+    controller.db.update_job(
+        "no-recovery-source", status="error", kernel_ref="ci-user/old-kernel",
+        meta_json={"recover_outputs_available": False},
+    )
+    try:
+        controller.recover_outputs("no-recovery-source")
+        raise AssertionError("recovery accepted without a preserved output source")
+    except ValueError as exc:
+        assert "Relancer" in str(exc)
+    controller.executor.shutdown(wait=False)
+
+print("Recovery availability guard passed.")
