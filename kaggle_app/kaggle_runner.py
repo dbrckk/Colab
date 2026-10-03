@@ -194,12 +194,34 @@ class KaggleController:
                 )
 
         artifact_names = {path.name for path, _ in artifacts}
+        artifact_by_name = {path.name: path for path, _ in artifacts}
         declared_files = [str(x) for x in (data.get("files") or [])]
         missing_declared = [name for name in declared_files if Path(name).name not in artifact_names]
         if missing_declared:
             raise RuntimeError(
                 "Le manifeste Kaggle référence des fichiers absents: "
                 + ", ".join(missing_declared[:10])
+            )
+
+        output_manifest = data.get("output_manifest") or []
+        for entry in output_manifest:
+            name = Path(str(entry.get("name") or "")).name
+            path = artifact_by_name.get(name)
+            if not name or path is None:
+                raise RuntimeError(f"Manifest SHA-256: fichier absent: {name or '?'}")
+            expected_size = int(entry.get("size") or -1)
+            if expected_size < 0 or path.stat().st_size != expected_size:
+                raise RuntimeError(
+                    f"Manifest SHA-256: taille invalide pour {name} "
+                    f"({path.stat().st_size} != {expected_size})."
+                )
+            expected_sha = str(entry.get("sha256") or "").lower()
+            if len(expected_sha) != 64 or self._hash_file(path).lower() != expected_sha:
+                raise RuntimeError(f"Manifest SHA-256: checksum invalide pour {name}.")
+
+        if output_manifest and len(output_manifest) != len(declared_files):
+            raise RuntimeError(
+                "Manifest SHA-256 incomplet: le nombre d'entrées ne correspond pas aux fichiers déclarés."
             )
 
         if expected_kind:
