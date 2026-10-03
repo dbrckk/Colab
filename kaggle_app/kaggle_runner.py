@@ -1048,7 +1048,6 @@ class KaggleController:
                 )
 
                 self._check_cancelled(job_id)
-                self._check_cancelled(job_id)
                 download = work / "download"
                 self.db.update_job(job_id, status="downloading")
                 _, result_manifest = self._download_validated_outputs(
