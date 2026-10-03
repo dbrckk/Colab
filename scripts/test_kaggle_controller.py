@@ -3948,3 +3948,50 @@ with tempfile.TemporaryDirectory() as td:
                 os.environ[key] = value
 
 print("Expired auth does not consume automatic recovery attempts.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root, storage_root=tmp / "media", db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local", worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1, cli_retries=1, kernel_timeout=60, accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=True, delete_remote_dataset=True,
+        keep_job_inputs=False, keep_source_inputs_for_retry=True, share_gradio=False,
+    )
+    old_values = {key: os.environ.get(key) for key in (
+        "KAGGLE_USERNAME", "KAGGLE_API_TOKEN", "KAGGLE_KEY"
+    )}
+    os.environ["KAGGLE_USERNAME"] = "expired-user"
+    os.environ["KAGGLE_API_TOKEN"] = "expired-token"
+    os.environ.pop("KAGGLE_KEY", None)
+    controller = KaggleController(settings)
+    controller.db.create_job("auth-preserve-kernel", "image", "x", {})
+    controller.db.update_job(
+        "auth-preserve-kernel",
+        status="recovering",
+        kernel_ref="expired-user/existing-kernel",
+        meta_json={"recover_outputs_available": True},
+    )
+    cleanup_calls = []
+    controller._cleanup_remote_refs = lambda kernel_ref="", dataset_ref="", force=False: cleanup_calls.append(
+        (kernel_ref, dataset_ref, force)
+    )
+    controller._run = lambda *args, **kwargs: (_ for _ in ()).throw(
+        RuntimeError("401 Unauthorized")
+    )
+    try:
+        controller._recover_remote_job("auth-preserve-kernel")
+        row = controller.db.get_job("auth-preserve-kernel")
+        assert row["status"] == "waiting_auth"
+        assert row["kernel_ref"] == "expired-user/existing-kernel"
+        assert all(call[0] == "" for call in cleanup_calls)
+    finally:
+        controller.executor.shutdown(wait=False)
+        for key, value in old_values.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+print("Waiting-auth recovery preserves the remote kernel from cleanup.")
