@@ -1446,6 +1446,8 @@ with tempfile.TemporaryDirectory() as td:
 
     original_execute = KaggleController._execute
     original_cleanup = KaggleController._cleanup_remote_refs
+    old_user = os.environ.get("KAGGLE_USERNAME")
+    old_token = os.environ.get("KAGGLE_API_TOKEN")
     executed = []
     cleaned = []
     KaggleController._execute = lambda self, job_id: executed.append(job_id)
@@ -1453,6 +1455,8 @@ with tempfile.TemporaryDirectory() as td:
         (kernel_ref, dataset_ref, force)
     )
     try:
+        os.environ["KAGGLE_USERNAME"] = "ci-user"
+        os.environ["KAGGLE_API_TOKEN"] = "ci-token"
         controller = KaggleController(settings)
         controller.executor.shutdown(wait=True)
         recovered = controller.db.get_job("resume-preparing")
@@ -1463,6 +1467,14 @@ with tempfile.TemporaryDirectory() as td:
     finally:
         KaggleController._execute = original_execute
         KaggleController._cleanup_remote_refs = original_cleanup
+        if old_user is None:
+            os.environ.pop("KAGGLE_USERNAME", None)
+        else:
+            os.environ["KAGGLE_USERNAME"] = old_user
+        if old_token is None:
+            os.environ.pop("KAGGLE_API_TOKEN", None)
+        else:
+            os.environ["KAGGLE_API_TOKEN"] = old_token
 
 print("Persisted local preparation auto-resume passed.")
 
