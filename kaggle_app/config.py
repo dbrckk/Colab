@@ -24,6 +24,7 @@ class Settings:
     kernel_timeout: int = int(os.getenv("KAGGLE_KERNEL_TIMEOUT", "21600"))
     accelerator: str = os.getenv("KAGGLE_ACCELERATOR", "NvidiaTeslaT4")
     delete_remote_kernel: bool = _bool("KAGGLE_DELETE_REMOTE_KERNEL", True)
+    delete_remote_dataset: bool = _bool("KAGGLE_DELETE_REMOTE_DATASET", True)
     recovery_retention_days: int = max(1, int(os.getenv("KAGGLE_RECOVERY_RETENTION_DAYS", "7")))
     keep_job_inputs: bool = _bool("QWEN_KEEP_JOB_INPUTS", False)
     keep_source_inputs_for_retry: bool = _bool("QWEN_KEEP_SOURCE_INPUTS_FOR_RETRY", True)
