@@ -1003,11 +1003,48 @@ class KaggleController:
             if self.is_cancelled(job_id):
                 self.db.update_job(job_id, status="cancelled", error="")
             else:
-                self.db.update_job(job_id, status="error", error=f"{type(exc).__name__}: {exc}")
+                current = self.db.get_job(job_id) or job
+                failed_phase = current.get("status") or ""
+                current_meta = current.get("meta") or {}
+                preserve_kernel = bool(kernel_ref and failed_phase == "downloading")
+                self.db.update_job(
+                    job_id,
+                    status="error",
+                    error=f"{type(exc).__name__}: {exc}",
+                    meta_json={
+                        **current_meta,
+                        "recover_outputs_available": preserve_kernel,
+                        "failed_phase": failed_phase,
+                    },
+                )
         finally:
-            self._cleanup_remote_refs(kernel_ref, dataset_ref)
+            current = self.db.get_job(job_id) or {}
+            meta = current.get("meta") or {}
+            preserve_kernel = bool(meta.get("recover_outputs_available"))
+            if preserve_kernel:
+                # Inputs dataset is no longer needed once the kernel has completed.
+                self._cleanup_remote_refs("", dataset_ref)
+            else:
+                self._cleanup_remote_refs(kernel_ref, dataset_ref)
             with self._lock:
                 self._cancelled.discard(job_id)
+
+    def recover_outputs(self, job_id: str) -> str:
+        job = self.db.get_job(job_id)
+        if not job:
+            raise ValueError("Job introuvable.")
+        kernel_ref = job.get("kernel_ref") or ""
+        if not kernel_ref:
+            raise ValueError("Ce job n'a pas de kernel Kaggle à récupérer.")
+        if job.get("status") not in {"error", "interrupted"}:
+            raise ValueError("La récupération manuelle est réservée aux jobs en erreur/interrompus.")
+        with self._lock:
+            future = self._futures.get(job_id)
+            if future is not None and not future.done():
+                raise RuntimeError("Une récupération est déjà en cours pour ce job.")
+            self.db.update_job(job_id, status="recovering", error="")
+            self._futures[job_id] = self.executor.submit(self._recover_remote_job, job_id)
+        return "Récupération des outputs Kaggle relancée sans recalcul GPU."
 
     def cleanup_storage(self, export_max_age_days: int = 14) -> str:
         now = time.time()
