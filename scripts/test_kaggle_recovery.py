@@ -4,6 +4,7 @@ from kaggle_app.kaggle_recovery import (
     has_recoverable_outputs,
     keep_remote_kernel_for_retry,
     recoverable_output_candidate,
+    recovery_marked,
     remote_kernel_is_preserved,
     startup_recovery_action,
 )
@@ -104,3 +105,14 @@ assert remote_kernel_is_preserved(
 ) is False
 
 print("Kaggle recovery availability predicate tests passed.")
+
+
+marked_without_kernel = row(
+    "error",
+    "",
+    {"recover_outputs_available": True},
+)
+assert recovery_marked(marked_without_kernel) is True
+assert has_recoverable_outputs(marked_without_kernel) is False
+
+print("Kaggle recovery marker semantics passed.")
