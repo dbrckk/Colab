@@ -1167,6 +1167,17 @@ class KaggleController:
                     status="error",
                     error="Résultats locaux manquants et le kernel Kaggle n'est plus récupérable.",
                 )
+            else:
+                # Do not leave a job falsely marked done when neither local
+                # media nor a confirmed remote recovery source can be proven.
+                self.db.update_job(
+                    row["id"],
+                    status="error",
+                    error=(
+                        "Résultats locaux manquants. L'état du kernel Kaggle "
+                        "n'a pas pu être confirmé; réessaie le diagnostic ou relance le job."
+                    ),
+                )
         return checked, recoverable
 
     def reconcile_artifacts(self) -> tuple[int, int]:
