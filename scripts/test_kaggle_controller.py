@@ -1775,7 +1775,9 @@ with tempfile.TemporaryDirectory() as td:
         )
         recovered_ids = []
         original_recover = controller._recover_remote_job
+        original_validate = controller.validate_current_credentials
         controller._recover_remote_job = lambda job_id: recovered_ids.append(job_id)
+        controller.validate_current_credentials = lambda max_age_seconds=300: None
         os.environ["KAGGLE_USERNAME"] = "ci-user"
         os.environ["KAGGLE_API_TOKEN"] = "ci-token"
         count = controller.resume_recoverable_outputs()
@@ -1787,6 +1789,7 @@ with tempfile.TemporaryDirectory() as td:
         assert row["meta"]["auto_recovery_attempts"] == 1
         assert row["meta"]["last_auto_recovery_at"] > 0
         controller._recover_remote_job = original_recover
+        controller.validate_current_credentials = original_validate
     finally:
         if old_user is None:
             os.environ.pop("KAGGLE_USERNAME", None)
@@ -2263,8 +2266,10 @@ with tempfile.TemporaryDirectory() as td:
         )
         recovered = []
         executed = []
+        original_validate = controller.validate_current_credentials
         controller._recover_remote_job = lambda job_id: recovered.append(job_id)
         controller._execute = lambda job_id: executed.append(job_id)
+        controller.validate_current_credentials = lambda max_age_seconds=300: None
         os.environ["KAGGLE_USERNAME"] = "ci-user"
         os.environ["KAGGLE_API_TOKEN"] = "ci-token"
         count = controller.resume_waiting_jobs()
@@ -2276,6 +2281,7 @@ with tempfile.TemporaryDirectory() as td:
         assert row["status"] == "recovering"
         assert row["kernel_ref"] == "ci-user/existing-kernel"
     finally:
+        controller.validate_current_credentials = original_validate
         for key in ("KAGGLE_USERNAME", "KAGGLE_API_TOKEN", "KAGGLE_KEY"):
             os.environ.pop(key, None)
         for key, value in old_values.items():
