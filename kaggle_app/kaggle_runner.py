@@ -1610,6 +1610,28 @@ class KaggleController:
             except Exception as exc:
                 lines.append(f"❌ Authentification Kaggle: {type(exc).__name__}: {exc}")
 
+        jobs = self.db.list_jobs(1000)
+        waiting_auth = sum(1 for row in jobs if row.get("status") == "waiting_auth")
+        recoverable = sum(
+            1 for row in jobs
+            if (row.get("meta") or {}).get("recover_outputs_available")
+        )
+        remote_preserved = sum(
+            1 for row in jobs
+            if row.get("kernel_ref")
+            and row.get("status") in {
+                "waiting_auth", "recovering", "downloading", "error", "interrupted"
+            }
+        )
+        if waiting_auth:
+            lines.append(f"⚠️ {waiting_auth} job(s) attendent l'authentification.")
+        if recoverable:
+            lines.append(f"♻️ {recoverable} job(s) ont des outputs Kaggle récupérables sans recalcul.")
+        if remote_preserved:
+            lines.append(f"🛰️ {remote_preserved} kernel(s) distant(s) conservé(s) pour reprise.")
+        if not waiting_auth and not recoverable and not remote_preserved:
+            lines.append("✅ Aucun job de reprise en attente.")
+
         return "\n".join(lines)
 
     def remote_logs(self, job_id: str) -> str:
