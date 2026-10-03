@@ -1421,3 +1421,42 @@ with tempfile.TemporaryDirectory() as td:
     controller.executor.shutdown(wait=False)
 
 print("Artifact reconciliation validation passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root, storage_root=tmp / "media", db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local", worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1, cli_retries=1, kernel_timeout=60, accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False, keep_job_inputs=False,
+        keep_source_inputs_for_retry=True, share_gradio=False,
+    )
+    seed_db = JobDB(settings.db_path)
+    seed_db.create_job("resume-preparing", "image", "resume me", {
+        "steps": 20, "cfg": 1.0, "seed": 1, "aspect": "1:1",
+        "source_image": "", "target_video": "", "dataset_ref": "ci-user/stale-dataset",
+    })
+    seed_db.update_job("resume-preparing", status="preparing")
+
+    original_execute = KaggleController._execute
+    original_cleanup = KaggleController._cleanup_remote_refs
+    executed = []
+    cleaned = []
+    KaggleController._execute = lambda self, job_id: executed.append(job_id)
+    KaggleController._cleanup_remote_refs = lambda self, kernel_ref="", dataset_ref="", force=False: cleaned.append(
+        (kernel_ref, dataset_ref, force)
+    )
+    try:
+        controller = KaggleController(settings)
+        controller.executor.shutdown(wait=True)
+        recovered = controller.db.get_job("resume-preparing")
+        assert recovered["status"] == "queued"
+        assert recovered["meta"]["dataset_ref"] == ""
+        assert executed == ["resume-preparing"]
+        assert any(x[1] == "ci-user/stale-dataset" for x in cleaned)
+    finally:
+        KaggleController._execute = original_execute
+        KaggleController._cleanup_remote_refs = original_cleanup
+
+print("Persisted local preparation auto-resume passed.")
