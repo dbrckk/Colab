@@ -1246,6 +1246,40 @@ class KaggleController:
                 )
         return checked, recoverable
 
+    def cleanup_expired_recovery_kernels(self) -> int:
+        if not self.credentials_ready():
+            return 0
+        cutoff = time.time() - max(1, int(self.settings.recovery_retention_days)) * 86400
+        removed = 0
+        for row in self.db.list_jobs(100000):
+            meta = row.get("meta") or {}
+            if not meta.get("recover_outputs_available"):
+                continue
+            if float(row.get("updated_at") or 0) >= cutoff:
+                continue
+            kernel_ref = row.get("kernel_ref") or ""
+            dataset_ref = meta.get("dataset_ref") or ""
+            if kernel_ref or dataset_ref:
+                try:
+                    self._cleanup_remote_refs(kernel_ref, dataset_ref)
+                except Exception:
+                    continue
+            self.db.update_job(
+                row["id"],
+                status="error",
+                error=(
+                    f"Délai de récupération dépassé ({self.settings.recovery_retention_days} jours); "
+                    "utilise Relancer pour recalculer."
+                ),
+                meta_json={
+                    **meta,
+                    "recover_outputs_available": False,
+                    "failed_phase": "recovery_expired",
+                },
+            )
+            removed += 1
+        return removed
+
     def reconcile_artifacts(self) -> tuple[int, int]:
         stale_ids: list[int] = []
         checked = 0
@@ -1294,6 +1328,7 @@ class KaggleController:
         reclaimed += gc_bytes
         _, stale_artifacts = self.reconcile_artifacts()
         _, recoverable_jobs = self.reconcile_completed_jobs()
+        expired_recovery_kernels = self.cleanup_expired_recovery_kernels()
 
         try:
             self.db.vacuum()
@@ -1311,7 +1346,9 @@ class KaggleController:
             f"{removed_inputs} dossier(s) d'entrée orphelin(s) • "
             f"{gc_files} source(s) partagée(s) non référencée(s) • "
             f"{stale_artifacts} artefact(s) DB obsolète(s) • "
-            f"{recoverable_jobs} job(s) récupérable(s) détecté(s) • {amount} libéré(s)."
+            f"{recoverable_jobs} job(s) récupérable(s) détecté(s) • "
+            f"{expired_recovery_kernels} récupération(s) distante(s) expirée(s) • "
+            f"{amount} libéré(s)."
         )
 
     def dashboard_summary(self) -> str:
