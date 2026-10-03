@@ -1,8 +1,13 @@
+import os
+import tempfile
+from pathlib import Path
+
 from kaggle_app.kaggle_auth import (
     auth_cache_valid,
     credential_fingerprint,
     credentials_ready,
     validate_credential_fields,
+    write_credential_env,
 )
 
 
@@ -51,3 +56,38 @@ except ValueError:
     pass
 
 print("Kaggle auth policy tests passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    env_path = Path(td) / ".env.local"
+    env_path.write_text(
+        "KEEP_ME=value\nKAGGLE_USERNAME=old\nKAGGLE_KEY=old-key\n",
+        encoding="utf-8",
+    )
+    write_credential_env(
+        env_path,
+        username="new-user",
+        api_token="new-token",
+        legacy_key="",
+    )
+    text = env_path.read_text(encoding="utf-8")
+    assert "KEEP_ME=value" in text
+    assert "KAGGLE_USERNAME=new-user" in text
+    assert "KAGGLE_API_TOKEN=new-token" in text
+    assert "KAGGLE_KEY=" not in text
+    if os.name != "nt":
+        assert (env_path.stat().st_mode & 0o777) == 0o600
+
+    write_credential_env(
+        env_path,
+        username="legacy-user",
+        api_token="",
+        legacy_key="legacy-secret",
+    )
+    text = env_path.read_text(encoding="utf-8")
+    assert "KEEP_ME=value" in text
+    assert "KAGGLE_USERNAME=legacy-user" in text
+    assert "KAGGLE_KEY=legacy-secret" in text
+    assert "KAGGLE_API_TOKEN=" not in text
+
+print("Atomic Kaggle credential persistence tests passed.")
