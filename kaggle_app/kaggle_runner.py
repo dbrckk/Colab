@@ -42,6 +42,10 @@ def _is_transient_cli_error(text: str) -> bool:
 class JobCancelled(RuntimeError):
     pass
 
+class RemoteKernelFailed(RuntimeError):
+    """Kaggle explicitly reported a terminal kernel failure."""
+    pass
+
 def slugify(value: str) -> str:
     value = re.sub(r"[^a-z0-9-]+", "-", value.lower()).strip("-")
     value = re.sub(r"-+", "-", value)
@@ -320,7 +324,7 @@ class KaggleController:
                         logs = self._run(["kernels", "logs", kernel_ref], timeout=180)
                     except Exception:
                         logs = raw
-                    raise RuntimeError("Le job Kaggle récupéré a échoué:\n" + logs[-7000:])
+                    raise RemoteKernelFailed("Le job Kaggle récupéré a échoué:\n" + logs[-7000:])
                 time.sleep(max(5, self.settings.poll_seconds))
 
             with tempfile.TemporaryDirectory(prefix=f"qwen-kaggle-recover-{job_id}-") as td:
@@ -370,6 +374,7 @@ class KaggleController:
                 current = self.db.get_job(job_id) or job
                 current_meta = current.get("meta") or {}
                 missing_remote = self._remote_kernel_missing(exc)
+                remote_failed = isinstance(exc, RemoteKernelFailed)
                 self.db.update_job(
                     job_id,
                     status="error",
@@ -380,8 +385,13 @@ class KaggleController:
                     ),
                     meta_json={
                         **current_meta,
-                        "recover_outputs_available": not missing_remote,
-                        "failed_phase": ("remote_missing" if missing_remote else "downloading"),
+                        "recover_outputs_available": not missing_remote and not remote_failed,
+                        "failed_phase": (
+                            "remote_missing" if missing_remote
+                            else "remote_failed" if remote_failed
+                            else "downloading"
+                        ),
+                        "remote_failure_confirmed": remote_failed,
                     },
                 )
         finally:
@@ -1111,7 +1121,12 @@ class KaggleController:
             return "complete", output
         if "queued" in low or "pending" in low:
             return "queued", output
-        return "running", output
+        if any(x in low for x in ("running", "active", "executing")):
+            return "running", output
+        raise RuntimeError(
+            "Statut Kaggle non reconnu; le kernel distant est conservé pour reprise: "
+            + output[-1500:]
+        )
 
     def _execute(self, job_id: str) -> None:
         job = self.db.get_job(job_id)
@@ -1197,7 +1212,7 @@ class KaggleController:
                             logs = self._run(["kernels", "logs", kernel_ref], timeout=180)
                         except Exception:
                             logs = raw
-                        raise RuntimeError("Kaggle a signalé une erreur:\n" + logs[-7000:])
+                        raise RemoteKernelFailed("Kaggle a signalé une erreur:\n" + logs[-7000:])
                     time.sleep(max(5, self.settings.poll_seconds))
 
                 self._check_cancelled(job_id)
@@ -1233,7 +1248,11 @@ class KaggleController:
                 current = self.db.get_job(job_id) or job
                 failed_phase = current.get("status") or ""
                 current_meta = current.get("meta") or {}
-                preserve_kernel = bool(kernel_ref and failed_phase == "downloading")
+                preserve_kernel = bool(
+                    kernel_ref
+                    and failed_phase in {"submitting", "queued", "running", "downloading", "recovering"}
+                    and not isinstance(exc, RemoteKernelFailed)
+                )
                 self.db.update_job(
                     job_id,
                     status="error",
@@ -1242,6 +1261,7 @@ class KaggleController:
                         **current_meta,
                         "recover_outputs_available": preserve_kernel,
                         "failed_phase": failed_phase,
+                        "remote_failure_confirmed": isinstance(exc, RemoteKernelFailed),
                     },
                 )
         finally:
