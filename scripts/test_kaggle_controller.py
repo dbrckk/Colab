@@ -4129,3 +4129,45 @@ with tempfile.TemporaryDirectory() as td:
                 os.environ[key] = value
 
 print("Resumed execute auth preflight short-circuits before remote preparation.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root, storage_root=tmp / "media", db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local", worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1, cli_retries=1, kernel_timeout=60, accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False, delete_remote_dataset=True,
+        keep_job_inputs=False, keep_source_inputs_for_retry=True, share_gradio=False,
+    )
+    old_values = {key: os.environ.get(key) for key in (
+        "KAGGLE_USERNAME", "KAGGLE_API_TOKEN", "KAGGLE_KEY"
+    )}
+    os.environ["KAGGLE_USERNAME"] = "status-user"
+    os.environ["KAGGLE_API_TOKEN"] = "status-token"
+    os.environ.pop("KAGGLE_KEY", None)
+    controller = KaggleController(settings)
+    try:
+        assert controller.credentials_ready() is True
+        assert controller.credentials_recently_validated() is False
+        assert "Kaggle configuré — à valider" in controller.dashboard_summary()
+
+        controller._auth_cache = {
+            "fingerprint": controller._credential_fingerprint(),
+            "ts": time.time(),
+        }
+        assert controller.credentials_recently_validated() is True
+        assert "Kaggle prêt" in controller.dashboard_summary()
+
+        os.environ["KAGGLE_API_TOKEN"] = "rotated-token"
+        assert controller.credentials_recently_validated() is False
+        assert "Kaggle configuré — à valider" in controller.dashboard_summary()
+    finally:
+        controller.executor.shutdown(wait=False)
+        for key, value in old_values.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+print("Kaggle configured-vs-validated status labeling passed.")
