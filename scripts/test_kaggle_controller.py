@@ -1563,3 +1563,36 @@ with tempfile.TemporaryDirectory() as td:
     controller.executor.shutdown(wait=False)
 
 print("SHA-256 output manifest validation passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root, storage_root=tmp / "media", db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local", worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1, cli_retries=1, kernel_timeout=60, accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False, keep_job_inputs=False,
+        keep_source_inputs_for_retry=True, share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    controller.db.create_job("export-sha", "image", "x", {})
+    media_dir = settings.storage_root / "export-sha"
+    media_dir.mkdir(parents=True)
+    media = media_dir / "image.png"
+    media.write_bytes(base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
+    ))
+    controller.db.add_artifact("export-sha", str(media), "image")
+    archive = Path(controller.export_job_archive("export-sha"))
+    import zipfile as _zipfile
+    with _zipfile.ZipFile(archive) as zf:
+        manifest = json.loads(zf.read("job.json"))
+        exported = manifest["exported_artifacts"]
+        assert len(exported) == 1
+        assert exported[0]["name"] == "image.png"
+        assert exported[0]["size"] == media.stat().st_size
+        assert exported[0]["sha256"] == controller._hash_file(media)
+        assert zf.read("media/image.png") == media.read_bytes()
+    controller.executor.shutdown(wait=False)
+
+print("Export SHA-256 manifest validation passed.")
