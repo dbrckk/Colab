@@ -56,6 +56,7 @@ class JobDB:
                 if integrity != "ok":
                     raise sqlite3.DatabaseError(f"integrity_check={integrity}")
                 con.executescript(SCHEMA)
+                self._migrate_artifact_uniqueness(con)
         except sqlite3.DatabaseError:
             if self.path.exists():
                 stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -64,6 +65,24 @@ class JobDB:
                 self.recovered_corrupt_path = backup
             with self._conn() as con:
                 con.executescript(SCHEMA)
+                self._migrate_artifact_uniqueness(con)
+
+    def _migrate_artifact_uniqueness(self, con: sqlite3.Connection) -> None:
+        # Older databases allowed duplicate artifact rows if the controller
+        # stopped after copying outputs but before marking the job complete.
+        con.execute(
+            """
+            DELETE FROM artifacts
+            WHERE id NOT IN (
+                SELECT MIN(id) FROM artifacts GROUP BY job_id, path
+            )
+            """
+        )
+        con.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_artifacts_job_path "
+            "ON artifacts(job_id, path)"
+        )
+        con.commit()
 
     def _conn(self):
         con = sqlite3.connect(self.path, timeout=30, check_same_thread=False)
@@ -121,7 +140,7 @@ class JobDB:
     def add_artifact(self, job_id: str, path: str, kind: str) -> None:
         with _LOCK, self._conn() as con:
             con.execute(
-                "INSERT INTO artifacts(job_id,path,kind,created_at) VALUES(?,?,?,?)",
+                "INSERT OR IGNORE INTO artifacts(job_id,path,kind,created_at) VALUES(?,?,?,?)",
                 (job_id, path, kind, time.time()),
             )
             con.commit()
