@@ -1349,3 +1349,33 @@ with tempfile.TemporaryDirectory() as td:
     assert rows[0]["path"] == artifact_path
 
 print("Artifact DB idempotency validation passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    db_path = tmp / "legacy.sqlite3"
+    import sqlite3 as _sqlite3
+    con = _sqlite3.connect(db_path)
+    con.executescript("""
+    CREATE TABLE jobs (
+        id TEXT PRIMARY KEY, task TEXT NOT NULL, prompt TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL, kernel_ref TEXT NOT NULL DEFAULT '',
+        created_at REAL NOT NULL, updated_at REAL NOT NULL,
+        error TEXT NOT NULL DEFAULT '', meta_json TEXT NOT NULL DEFAULT '{}'
+    );
+    CREATE TABLE artifacts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL,
+        path TEXT NOT NULL, kind TEXT NOT NULL, created_at REAL NOT NULL
+    );
+    INSERT INTO jobs VALUES ('legacy','image','x','done','',1,1,'','{}');
+    INSERT INTO artifacts(job_id,path,kind,created_at) VALUES ('legacy','/tmp/a.png','image',1);
+    INSERT INTO artifacts(job_id,path,kind,created_at) VALUES ('legacy','/tmp/a.png','image',2);
+    """)
+    con.commit()
+    con.close()
+    db = JobDB(db_path)
+    assert len(db.artifacts("legacy")) == 1
+    db.add_artifact("legacy", "/tmp/a.png", "image")
+    assert len(db.artifacts("legacy")) == 1
+
+print("Legacy artifact duplicate migration passed.")
