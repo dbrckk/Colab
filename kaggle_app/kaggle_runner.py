@@ -170,6 +170,18 @@ class KaggleController:
                 raise RuntimeError(
                     f"Le job {job.get('task')} est terminé sans média {expected_kind} décodable."
                 )
+            if job.get("task") == "image_batch":
+                meta = job.get("meta") or {}
+                expected_count = int(meta.get("batch_count") or len(meta.get("prompts") or []))
+                declared_count = int(data.get("batch_count") or 0)
+                if declared_count != expected_count:
+                    raise RuntimeError(
+                        f"Lot incomplet: le worker annonce {declared_count}/{expected_count} image(s)."
+                    )
+                if len(media) != expected_count:
+                    raise RuntimeError(
+                        f"Lot incomplet: {len(media)}/{expected_count} image(s) décodable(s) récupérée(s)."
+                    )
         return data
 
     def _recover_remote_job(self, job_id: str) -> None:
