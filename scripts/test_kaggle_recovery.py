@@ -1,8 +1,10 @@
 from kaggle_app.kaggle_recovery import (
     MAX_AUTO_RECOVERY_ATTEMPTS,
     auto_recovery_attempts,
+    has_recoverable_outputs,
     keep_remote_kernel_for_retry,
     recoverable_output_candidate,
+    remote_kernel_is_preserved,
     startup_recovery_action,
 )
 
@@ -79,3 +81,26 @@ assert keep_remote_kernel_for_retry(
 ) is False
 
 print("Kaggle recovery policy tests passed.")
+
+
+assert has_recoverable_outputs(
+    row("error", "u/k", {"recover_outputs_available": True})
+) is True
+assert has_recoverable_outputs(
+    row("error", "", {"recover_outputs_available": True})
+) is False
+
+assert remote_kernel_is_preserved(
+    row("waiting_auth", "u/k", {})
+) is True
+assert remote_kernel_is_preserved(
+    row("recovering", "u/k", {})
+) is True
+assert remote_kernel_is_preserved(
+    row("error", "u/k", {"recover_outputs_available": True})
+) is True
+assert remote_kernel_is_preserved(
+    row("error", "u/k", {"recover_outputs_available": False})
+) is False
+
+print("Kaggle recovery availability predicate tests passed.")
