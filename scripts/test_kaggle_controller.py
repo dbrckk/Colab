@@ -1172,3 +1172,50 @@ with tempfile.TemporaryDirectory() as td:
     controller.executor.shutdown(wait=False)
 
 print("Waiting-auth cancellation validation passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root,
+        storage_root=tmp / "media",
+        db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local",
+        worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1,
+        cli_retries=1,
+        kernel_timeout=60,
+        accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False,
+        keep_job_inputs=False,
+        keep_source_inputs_for_retry=True,
+        share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    good = tmp / "good.png"
+    good.write_bytes(base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
+    ))
+    bad = tmp / "bad.png"
+    bad.write_bytes(b"broken")
+
+    controller._validate_submission("image", "ok", 25, 1.0, -1, "1:1")
+    controller._validate_submission("image_edit", "edit", 25, 1.0, 1, "16:9", str(good), None)
+
+    invalid_cases = [
+        ("image", "", 25, 1.0, -1, "1:1", None, None),
+        ("image", "x", 0, 1.0, -1, "1:1", None, None),
+        ("image", "x", 25, 31.0, -1, "1:1", None, None),
+        ("image", "x", 25, 1.0, -2, "1:1", None, None),
+        ("image", "x", 25, 1.0, -1, "2:1", None, None),
+        ("image_edit", "x", 25, 1.0, -1, "1:1", str(bad), None),
+    ]
+    for args in invalid_cases:
+        try:
+            controller._validate_submission(*args)
+            raise AssertionError(f"invalid submission accepted: {args}")
+        except (ValueError, FileNotFoundError):
+            pass
+    controller.executor.shutdown(wait=False)
+
+print("Submission preflight validation passed.")
