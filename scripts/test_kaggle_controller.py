@@ -3657,3 +3657,78 @@ with tempfile.TemporaryDirectory() as td:
     controller.executor.shutdown(wait=False)
 
 print("Kaggle status parser ambiguity protection passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root, storage_root=tmp / "media", db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local", worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1, cli_retries=1, kernel_timeout=60, accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False, delete_remote_dataset=True,
+        keep_job_inputs=False, keep_source_inputs_for_retry=True, share_gradio=False,
+    )
+    old_values = {key: os.environ.get(key) for key in (
+        "KAGGLE_USERNAME", "KAGGLE_API_TOKEN", "KAGGLE_KEY"
+    )}
+    os.environ["KAGGLE_USERNAME"] = "loaded-user"
+    os.environ["KAGGLE_API_TOKEN"] = "loaded-token"
+    os.environ.pop("KAGGLE_KEY", None)
+    controller = KaggleController(settings)
+    original_run = controller._run
+    original_resume_wait = controller.resume_waiting_jobs
+    original_resume_outputs = controller.resume_recoverable_outputs
+    controller._run = lambda *args, **kwargs: "ok"
+    controller.resume_waiting_jobs = lambda: 0
+    controller.resume_recoverable_outputs = lambda: 0
+    try:
+        msg = controller.save_credentials("loaded-user", "", "", persist=True)
+        saved = settings.env_file.read_text(encoding="utf-8")
+        assert "KAGGLE_USERNAME=loaded-user" in saved
+        assert "KAGGLE_API_TOKEN=loaded-token" in saved
+        assert "KAGGLE_KEY=" not in saved
+        assert "validés" in msg
+    finally:
+        controller._run = original_run
+        controller.resume_waiting_jobs = original_resume_wait
+        controller.resume_recoverable_outputs = original_resume_outputs
+        controller.executor.shutdown(wait=False)
+        for key, value in old_values.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+print("Loaded Kaggle secret reuse without UI exposure passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root, storage_root=tmp / "media", db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local", worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1, cli_retries=1, kernel_timeout=60, accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False, delete_remote_dataset=True,
+        keep_job_inputs=False, keep_source_inputs_for_retry=True, share_gradio=False,
+    )
+    old_values = {key: os.environ.get(key) for key in (
+        "KAGGLE_USERNAME", "KAGGLE_API_TOKEN", "KAGGLE_KEY"
+    )}
+    os.environ["KAGGLE_USERNAME"] = "loaded-user"
+    os.environ["KAGGLE_API_TOKEN"] = "loaded-token"
+    os.environ.pop("KAGGLE_KEY", None)
+    controller = KaggleController(settings)
+    try:
+        controller.save_credentials("different-user", "", "", persist=False)
+        raise AssertionError("secret from another username was reused")
+    except ValueError:
+        pass
+    finally:
+        controller.executor.shutdown(wait=False)
+        for key, value in old_values.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+print("Loaded Kaggle secret is not reused for a different username.")
