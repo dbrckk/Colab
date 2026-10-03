@@ -269,7 +269,11 @@ def _refresh(job_id):
     status = f"{j['status']}\nKaggle: {j['kernel_ref'] or '—'}"
     job_meta = j.get("meta") or {}
     if job_meta.get("recover_outputs_available"):
+        attempts = int(job_meta.get("auto_recovery_attempts") or 0)
         status += "\nOutput Kaggle conservé : récupération sans recalcul disponible."
+        status += f" Tentatives automatiques : {min(attempts, 3)}/3."
+        if attempts >= 3:
+            status += " Limite automatique atteinte : utilise Récupérer sans recalcul pour réessayer manuellement."
     result_manifest = job_meta.get("result_manifest") or {}
     if result_manifest:
         details = []
