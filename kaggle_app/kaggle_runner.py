@@ -329,14 +329,10 @@ class KaggleController:
 
             with tempfile.TemporaryDirectory(prefix=f"qwen-kaggle-recover-{job_id}-") as td:
                 download = Path(td) / "download"
-                download.mkdir(parents=True, exist_ok=True)
                 self.db.update_job(job_id, status="downloading")
-                self._run(
-                    ["kernels", "output", kernel_ref, "-p", str(download), "-o", "-q"],
-                    timeout=900,
+                _, result_manifest = self._download_validated_outputs(
+                    job, kernel_ref, download
                 )
-                staged_artifacts = scan_outputs(download)
-                result_manifest = self._validate_downloaded_outputs(job, staged_artifacts)
                 artifacts = import_outputs(job_id, download, self.settings.storage_root)
                 current = self.db.get_job(job_id) or job
                 current_meta = current.get("meta") or {}
@@ -1112,6 +1108,42 @@ class KaggleController:
         (folder / "kernel-metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
         return kernel_ref
 
+    def _download_validated_outputs(
+        self,
+        job: dict[str, Any],
+        kernel_ref: str,
+        download: Path,
+        attempts: int = 3,
+    ) -> tuple[list[tuple[Path, str]], dict[str, Any]]:
+        last_exc: Exception | None = None
+        total = max(1, int(attempts))
+        for attempt in range(1, total + 1):
+            self._check_cancelled(job["id"])
+            if download.exists():
+                shutil.rmtree(download, ignore_errors=True)
+            download.mkdir(parents=True, exist_ok=True)
+            try:
+                self._run(
+                    ["kernels", "output", kernel_ref, "-p", str(download), "-o", "-q"],
+                    timeout=900,
+                )
+                staged_artifacts = scan_outputs(download)
+                result_manifest = self._validate_downloaded_outputs(job, staged_artifacts)
+                return staged_artifacts, result_manifest
+            except JobCancelled:
+                raise
+            except Exception as exc:
+                last_exc = exc
+                if attempt >= total:
+                    break
+                # Kaggle output propagation can lag briefly behind a terminal
+                # kernel state. Retry from a clean directory so partial files
+                # can never be mistaken for a complete download.
+                time.sleep(min(15, 3 * attempt))
+        raise RuntimeError(
+            f"Outputs Kaggle invalides après {total} tentative(s): {last_exc}"
+        ) from last_exc
+
     def _kernel_status(self, kernel_ref: str) -> tuple[str, str]:
         output = self._run(["kernels", "status", kernel_ref], timeout=120)
         low = output.lower()
@@ -1217,15 +1249,10 @@ class KaggleController:
 
                 self._check_cancelled(job_id)
                 download = work / "download"
-                download.mkdir(parents=True, exist_ok=True)
                 self.db.update_job(job_id, status="downloading")
-                self._run(
-                    ["kernels", "output", kernel_ref, "-p", str(download), "-o", "-q"],
-                    timeout=900,
+                _, result_manifest = self._download_validated_outputs(
+                    job, kernel_ref, download
                 )
-
-                staged_artifacts = scan_outputs(download)
-                result_manifest = self._validate_downloaded_outputs(job, staged_artifacts)
                 artifacts = import_outputs(job_id, download, self.settings.storage_root)
                 current = self.db.get_job(job_id) or job
                 current_meta = current.get("meta") or {}
