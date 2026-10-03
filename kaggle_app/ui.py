@@ -267,7 +267,10 @@ def _refresh(job_id):
     files = [a["path"] for a in artifacts if Path(a["path"]).exists()]
 
     status = f"{j['status']}\nKaggle: {j['kernel_ref'] or '—'}"
-    result_manifest = (j.get("meta") or {}).get("result_manifest") or {}
+    job_meta = j.get("meta") or {}
+    if job_meta.get("recover_outputs_available"):
+        status += "\nOutput Kaggle conservé : récupération sans recalcul disponible."
+    result_manifest = job_meta.get("result_manifest") or {}
     if result_manifest:
         details = []
         if result_manifest.get("seed") is not None:
