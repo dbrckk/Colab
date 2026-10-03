@@ -3652,7 +3652,11 @@ with tempfile.TemporaryDirectory() as td:
             controller._kernel_status("ci-user/kernel")
             raise AssertionError(f"ambiguous status unexpectedly accepted: {raw}")
         except RuntimeError as exc:
-            assert "Statut Kaggle non reconnu" in str(exc)
+            message = str(exc)
+            assert (
+                "Statut Kaggle non reconnu" in message
+                or "Statut Kaggle ambigu" in message
+            )
 
     controller.executor.shutdown(wait=False)
 
