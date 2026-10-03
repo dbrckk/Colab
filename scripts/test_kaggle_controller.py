@@ -1219,3 +1219,35 @@ with tempfile.TemporaryDirectory() as td:
     controller.executor.shutdown(wait=False)
 
 print("Submission preflight validation passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root,
+        storage_root=tmp / "media",
+        db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local",
+        worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1, cli_retries=1, kernel_timeout=60,
+        accelerator="NvidiaTeslaT4", delete_remote_kernel=False,
+        keep_job_inputs=False, keep_source_inputs_for_retry=True, share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    result = tmp / "result.json"
+    image = tmp / "image_001.png"
+    image.write_bytes(base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
+    ))
+    result.write_text(json.dumps({
+        "status": "done", "batch_count": 1, "files": ["image_001.png"]
+    }), encoding="utf-8")
+    job = {"task": "image_batch", "meta": {"batch_count": 2, "prompts": ["a", "b"]}}
+    try:
+        controller._validate_downloaded_outputs(job, [(result, "file"), (image, "image")])
+        raise AssertionError("incomplete batch accepted")
+    except RuntimeError as exc:
+        assert "Lot incomplet" in str(exc)
+    controller.executor.shutdown(wait=False)
+
+print("Incomplete batch validation passed.")
