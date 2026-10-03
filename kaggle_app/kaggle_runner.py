@@ -1201,6 +1201,26 @@ class KaggleController:
             if len(standalone_states) == 1:
                 state_token = next(iter(standalone_states))
 
+        state_group = {
+            "queued": "queued", "pending": "queued",
+            "running": "running", "active": "running", "executing": "running",
+            "complete": "complete", "completed": "complete",
+            "error": "error", "failed": "error",
+            "cancelled": "error", "canceled": "error",
+        }
+        mentioned = {
+            state_group[token.lower()]
+            for token in re.findall(
+                r"(?i)\b(queued|pending|running|active|executing|complete|completed|error|failed|cancelled|canceled)\b",
+                output or "",
+            )
+        }
+        if len(mentioned) > 1:
+            raise RuntimeError(
+                "Statut Kaggle ambigu; plusieurs états incompatibles ont été détectés. "
+                "Le kernel distant est conservé pour reprise: " + output[-1500:]
+            )
+
         if state_token in TERMINAL_BAD:
             return "error", output
         if state_token in TERMINAL_OK:
