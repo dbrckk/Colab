@@ -3096,3 +3096,60 @@ with tempfile.TemporaryDirectory() as td:
             os.environ["KAGGLE_KEY"] = old_key
 
 print("Credential-time output recovery resume passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root, storage_root=tmp / "media", db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local", worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1, cli_retries=1, kernel_timeout=60, accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False, recovery_retention_days=7,
+        keep_job_inputs=False, keep_source_inputs_for_retry=True, share_gradio=False,
+    )
+    settings.env_file.write_text(
+        "KAGGLE_ACCELERATOR=NvidiaTeslaP100\n"
+        "QWEN_KAGGLE_SHARE=false\n"
+        "KAGGLE_USERNAME=old-user\n"
+        "KAGGLE_API_TOKEN=old-token\n",
+        encoding="utf-8",
+    )
+    controller = KaggleController(settings)
+    original_run = controller._run
+    original_resume_wait = controller.resume_waiting_jobs
+    original_resume_outputs = controller.resume_recoverable_outputs
+    controller._run = lambda *args, **kwargs: "ok"
+    controller.resume_waiting_jobs = lambda: 0
+    controller.resume_recoverable_outputs = lambda: 0
+    old_user = os.environ.get("KAGGLE_USERNAME")
+    old_token = os.environ.get("KAGGLE_API_TOKEN")
+    old_key = os.environ.get("KAGGLE_KEY")
+    try:
+        controller.save_credentials("new-user", "new-token", "", persist=True)
+        saved = settings.env_file.read_text(encoding="utf-8")
+        assert "KAGGLE_ACCELERATOR=NvidiaTeslaP100" in saved
+        assert "QWEN_KAGGLE_SHARE=false" in saved
+        assert "KAGGLE_USERNAME=new-user" in saved
+        assert "KAGGLE_API_TOKEN=new-token" in saved
+        assert "old-user" not in saved
+        assert "old-token" not in saved
+        assert "KAGGLE_KEY=" not in saved
+    finally:
+        controller._run = original_run
+        controller.resume_waiting_jobs = original_resume_wait
+        controller.resume_recoverable_outputs = original_resume_outputs
+        controller.executor.shutdown(wait=False)
+        if old_user is None:
+            os.environ.pop("KAGGLE_USERNAME", None)
+        else:
+            os.environ["KAGGLE_USERNAME"] = old_user
+        if old_token is None:
+            os.environ.pop("KAGGLE_API_TOKEN", None)
+        else:
+            os.environ["KAGGLE_API_TOKEN"] = old_token
+        if old_key is None:
+            os.environ.pop("KAGGLE_KEY", None)
+        else:
+            os.environ["KAGGLE_KEY"] = old_key
+
+print("Credential persistence preserves settings passed.")
