@@ -6,6 +6,7 @@ from importlib.metadata import PackageNotFoundError, version
 import subprocess
 import sys
 import secrets
+import shutil
 from pathlib import Path
 
 def load_local_env() -> None:
@@ -44,7 +45,6 @@ def ensure_dependencies() -> None:
             check=True,
         )
 
-import shutil
 ensure_dependencies()
 
 from kaggle_app.config import SETTINGS
