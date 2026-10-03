@@ -3995,3 +3995,97 @@ with tempfile.TemporaryDirectory() as td:
                 os.environ[key] = value
 
 print("Waiting-auth recovery preserves the remote kernel from cleanup.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root, storage_root=tmp / "media", db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local", worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1, cli_retries=1, kernel_timeout=60, accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False, delete_remote_dataset=True,
+        keep_job_inputs=False, keep_source_inputs_for_retry=True, share_gradio=False,
+    )
+    old_values = {key: os.environ.get(key) for key in (
+        "KAGGLE_USERNAME", "KAGGLE_API_TOKEN", "KAGGLE_KEY"
+    )}
+    os.environ["KAGGLE_USERNAME"] = "expired-user"
+    os.environ["KAGGLE_API_TOKEN"] = "expired-token"
+    os.environ.pop("KAGGLE_KEY", None)
+    controller = KaggleController(settings)
+    controller.db.create_job(
+        "auth-before-kernel",
+        "image",
+        "x",
+        {"dataset_ref": "expired-user/stale-dataset"},
+    )
+    controller._run = lambda *args, **kwargs: (_ for _ in ()).throw(
+        RuntimeError("Authentication required to call the Kaggle API.")
+    )
+    try:
+        controller._execute("auth-before-kernel")
+        row = controller.db.get_job("auth-before-kernel")
+        assert row["status"] == "waiting_auth"
+        assert row["kernel_ref"] == ""
+        assert row["meta"]["recover_outputs_available"] is False
+        assert row["meta"]["failed_phase"] == "auth_required"
+    finally:
+        controller.executor.shutdown(wait=False)
+        for key, value in old_values.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+print("Pre-kernel auth expiration moves job to waiting_auth.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root, storage_root=tmp / "media", db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local", worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1, cli_retries=1, kernel_timeout=60, accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False, delete_remote_dataset=True,
+        keep_job_inputs=False, keep_source_inputs_for_retry=True, share_gradio=False,
+    )
+    old_values = {key: os.environ.get(key) for key in (
+        "KAGGLE_USERNAME", "KAGGLE_API_TOKEN", "KAGGLE_KEY"
+    )}
+    os.environ["KAGGLE_USERNAME"] = "valid-user"
+    os.environ["KAGGLE_API_TOKEN"] = "valid-token"
+    os.environ.pop("KAGGLE_KEY", None)
+    controller = KaggleController(settings)
+    controller.db.create_job(
+        "resume-stale-dataset",
+        "image",
+        "x",
+        {"dataset_ref": "valid-user/stale-dataset"},
+    )
+    controller.db.update_job("resume-stale-dataset", status="waiting_auth")
+    cleanup_calls = []
+    original_execute = controller._execute
+    original_validate = controller.validate_current_credentials
+    controller.validate_current_credentials = lambda max_age_seconds=300: None
+    controller._cleanup_remote_refs = lambda kernel_ref="", dataset_ref="", force=False: cleanup_calls.append(
+        (kernel_ref, dataset_ref, force)
+    )
+    controller._execute = lambda job_id: None
+    try:
+        resumed = controller.resume_waiting_jobs()
+        controller.executor.shutdown(wait=True)
+        row = controller.db.get_job("resume-stale-dataset")
+        assert resumed == 1
+        assert row["status"] == "queued"
+        assert row["meta"]["dataset_ref"] == ""
+        assert ("", "valid-user/stale-dataset", False) in cleanup_calls
+    finally:
+        controller._execute = original_execute
+        controller.validate_current_credentials = original_validate
+        for key, value in old_values.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+print("Waiting-auth resume clears stale remote dataset before replay.")
