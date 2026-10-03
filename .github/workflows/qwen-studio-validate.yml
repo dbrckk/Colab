@@ -14,6 +14,7 @@ on:
       - "scripts/test_video_checkpoint.py"
       - "scripts/test_gradio_ui_smoke.py"
       - "scripts/test_kaggle_controller.py"
+      - "scripts/test_kaggle_protocol.py"
       - "scripts/test_kaggle_ui_smoke.py"
       - "scripts/test_kaggle_cli_contract.py"
       - ".github/workflows/qwen-studio-validate.yml"
@@ -30,6 +31,7 @@ on:
       - "scripts/test_video_checkpoint.py"
       - "scripts/test_gradio_ui_smoke.py"
       - "scripts/test_kaggle_controller.py"
+      - "scripts/test_kaggle_protocol.py"
       - "scripts/test_kaggle_ui_smoke.py"
       - "scripts/test_kaggle_cli_contract.py"
   workflow_dispatch:
@@ -61,6 +63,8 @@ jobs:
         run: python scripts/test_gradio_ui_smoke.py
       - name: Kaggle controller unit test
         run: python scripts/test_kaggle_controller.py
+      - name: Kaggle protocol unit test
+        run: python scripts/test_kaggle_protocol.py
       - name: Kaggle Studio UI smoke test
         run: python scripts/test_kaggle_ui_smoke.py
       - name: Launcher import smoke test
