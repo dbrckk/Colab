@@ -1080,6 +1080,17 @@ class KaggleController:
             self._futures[job_id] = self.executor.submit(self._recover_remote_job, job_id)
         return "Récupération des outputs Kaggle relancée sans recalcul GPU."
 
+    def reconcile_artifacts(self) -> tuple[int, int]:
+        stale_ids: list[int] = []
+        checked = 0
+        for row in self.db.recent_artifacts(None, 100000):
+            checked += 1
+            path = row.get("path") or ""
+            if not path or not Path(path).is_file():
+                stale_ids.append(int(row["id"]))
+        removed = self.db.delete_artifacts_by_ids(stale_ids)
+        return checked, removed
+
     def cleanup_storage(self, export_max_age_days: int = 14) -> str:
         now = time.time()
         removed_exports = 0
@@ -1115,6 +1126,7 @@ class KaggleController:
 
         gc_files, gc_bytes = self._gc_input_store()
         reclaimed += gc_bytes
+        _, stale_artifacts = self.reconcile_artifacts()
 
         try:
             self.db.vacuum()
@@ -1130,7 +1142,8 @@ class KaggleController:
         return (
             f"Nettoyage terminé • {removed_exports} export(s) ancien(s) • "
             f"{removed_inputs} dossier(s) d'entrée orphelin(s) • "
-            f"{gc_files} source(s) partagée(s) non référencée(s) • {amount} libéré(s)."
+            f"{gc_files} source(s) partagée(s) non référencée(s) • "
+            f"{stale_artifacts} artefact(s) DB obsolète(s) • {amount} libéré(s)."
         )
 
     def dashboard_summary(self) -> str:
