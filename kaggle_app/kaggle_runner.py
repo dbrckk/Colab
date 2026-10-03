@@ -1652,9 +1652,13 @@ class KaggleController:
         remote_preserved = sum(
             1 for row in jobs
             if row.get("kernel_ref")
-            and row.get("status") in {
-                "waiting_auth", "recovering", "downloading", "error", "interrupted"
-            }
+            and (
+                row.get("status") in {"waiting_auth", "recovering", "downloading"}
+                or (
+                    row.get("status") in {"error", "interrupted"}
+                    and (row.get("meta") or {}).get("recover_outputs_available")
+                )
+            )
         )
         if waiting_auth:
             lines.append(f"⚠️ {waiting_auth} job(s) attendent l'authentification.")
