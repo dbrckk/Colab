@@ -69,16 +69,57 @@ class KaggleController:
             if status in interrupted:
                 meta = row.get("meta") or {}
                 dataset_ref = meta.get("dataset_ref") or ""
-                self.db.update_job(
-                    job_id,
-                    status="interrupted",
-                    error="Le contrôleur s'est arrêté avant la création complète du kernel Kaggle. Relance ce job.",
-                )
-                if dataset_ref:
-                    self.executor.submit(self._cleanup_remote_refs, "", dataset_ref)
+                # Source uploads are persisted before the job enters these
+                # states, so the local preparation phase is safe to replay.
+                if self.credentials_ready():
+                    if dataset_ref:
+                        try:
+                            self._cleanup_remote_refs("", dataset_ref)
+                        except Exception:
+                            pass
+                    self.db.update_job(
+                        job_id,
+                        status="queued",
+                        error="",
+                        meta_json={**meta, "dataset_ref": ""},
+                    )
+                    with self._lock:
+                        self._futures[job_id] = self.executor.submit(self._execute, job_id)
+                else:
+                    self.db.update_job(
+                        job_id,
+                        status="waiting_auth",
+                        error="En attente des identifiants Kaggle pour reprendre la préparation locale.",
+                    )
             elif status in recoverable and kernel_ref:
                 with self._lock:
                     self._futures[job_id] = self.executor.submit(self._recover_remote_job, job_id)
+            elif status in recoverable and not kernel_ref:
+                # A crash can happen between setting "submitting" and saving
+                # kernel_ref. Replaying preparation is safer than leaving a
+                # permanently stuck row; per-job kernel slugs are deterministic.
+                if self.credentials_ready():
+                    meta = row.get("meta") or {}
+                    dataset_ref = meta.get("dataset_ref") or ""
+                    if dataset_ref:
+                        try:
+                            self._cleanup_remote_refs("", dataset_ref)
+                        except Exception:
+                            pass
+                    self.db.update_job(
+                        job_id,
+                        status="queued",
+                        error="",
+                        meta_json={**meta, "dataset_ref": ""},
+                    )
+                    with self._lock:
+                        self._futures[job_id] = self.executor.submit(self._execute, job_id)
+                else:
+                    self.db.update_job(
+                        job_id,
+                        status="waiting_auth",
+                        error="En attente des identifiants Kaggle pour reprendre la file locale.",
+                    )
             elif status in {"queued", "waiting_auth"} and not kernel_ref:
                 if self.credentials_ready():
                     self.db.update_job(job_id, status="queued", error="")
