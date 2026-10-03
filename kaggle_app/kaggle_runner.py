@@ -1167,14 +1167,34 @@ class KaggleController:
 
     def _kernel_status(self, kernel_ref: str) -> tuple[str, str]:
         output = self._run(["kernels", "status", kernel_ref], timeout=120)
-        low = output.lower()
-        if any(x in low for x in TERMINAL_BAD):
+        normalized = (output or "").strip().lower()
+
+        # Prefer an explicit status value when the CLI prints "status: X" or
+        # "status = X". Fall back to a standalone state token only. Avoid
+        # substring matching so messages such as "no error detected" or
+        # "last completed version" cannot be misclassified as the live state.
+        match = re.search(
+            r"(?im)^\s*(?:kernel\s+)?status\s*[:=]\s*"
+            r"(queued|pending|running|active|executing|complete|completed|error|failed|cancelled|canceled)\s*$",
+            output or "",
+        )
+        state_token = match.group(1).lower() if match else ""
+        if not state_token:
+            tokens = re.findall(
+                r"(?i)\b(queued|pending|running|active|executing|complete|completed|error|failed|cancelled|canceled)\b",
+                normalized,
+            )
+            unique = {token.lower() for token in tokens}
+            if len(unique) == 1:
+                state_token = next(iter(unique))
+
+        if state_token in TERMINAL_BAD:
             return "error", output
-        if any(x in low for x in TERMINAL_OK):
+        if state_token in TERMINAL_OK:
             return "complete", output
-        if "queued" in low or "pending" in low:
+        if state_token in {"queued", "pending"}:
             return "queued", output
-        if any(x in low for x in ("running", "active", "executing")):
+        if state_token in {"running", "active", "executing"}:
             return "running", output
         raise RuntimeError(
             "Statut Kaggle non reconnu; le kernel distant est conservé pour reprise: "
