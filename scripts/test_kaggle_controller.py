@@ -3616,3 +3616,44 @@ with tempfile.TemporaryDirectory() as td:
     controller.executor.shutdown(wait=False)
 
 print("Active Kaggle job duplicate retry guard passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root, storage_root=tmp / "media", db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local", worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1, cli_retries=1, kernel_timeout=60, accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False, delete_remote_dataset=True,
+        keep_job_inputs=False, keep_source_inputs_for_retry=True, share_gradio=False,
+    )
+    controller = KaggleController(settings)
+
+    cases = [
+        ("status: running", "running"),
+        ("Kernel Status = completed", "complete"),
+        ("queued", "queued"),
+        ("FAILED", "error"),
+    ]
+    for raw, expected in cases:
+        controller._run = lambda *args, _raw=raw, **kwargs: _raw
+        state, returned = controller._kernel_status("ci-user/kernel")
+        assert state == expected
+        assert returned == raw
+
+    ambiguous = [
+        "running\nlast completed version: 4",
+        "status unknown; no error detected",
+        "completed build metadata\nrunning now",
+    ]
+    for raw in ambiguous:
+        controller._run = lambda *args, _raw=raw, **kwargs: _raw
+        try:
+            controller._kernel_status("ci-user/kernel")
+            raise AssertionError(f"ambiguous status unexpectedly accepted: {raw}")
+        except RuntimeError as exc:
+            assert "Statut Kaggle non reconnu" in str(exc)
+
+    controller.executor.shutdown(wait=False)
+
+print("Kaggle status parser ambiguity protection passed.")
