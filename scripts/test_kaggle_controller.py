@@ -3022,3 +3022,26 @@ with tempfile.TemporaryDirectory() as td:
     controller.executor.shutdown(wait=False)
 
 print("Missing remote recovery source classification passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root, storage_root=tmp / "media", db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local", worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1, cli_retries=1, kernel_timeout=60, accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False, keep_job_inputs=False,
+        keep_source_inputs_for_retry=True, share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    controller.db.create_job("delete-remote", "image", "x", {"dataset_ref": "ci-user/dataset"})
+    controller.db.update_job("delete-remote", status="error", kernel_ref="ci-user/kernel")
+    cleaned = []
+    controller._cleanup_remote_refs = lambda kernel, dataset: cleaned.append((kernel, dataset))
+    msg = controller.delete_local_job("delete-remote")
+    assert cleaned == [("ci-user/kernel", "ci-user/dataset")]
+    assert controller.db.get_job("delete-remote") is None
+    assert "supprimé" in msg
+    controller.executor.shutdown(wait=False)
+
+print("Remote cleanup on local deletion passed.")
