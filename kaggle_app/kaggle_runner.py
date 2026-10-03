@@ -420,6 +420,41 @@ class KaggleController:
                 resumed += 1
         return resumed
 
+    def resume_recoverable_outputs(self) -> int:
+        if not self.credentials_ready():
+            return 0
+        resumed = 0
+        for row in self.db.list_jobs(500):
+            if row.get("status") not in {"error", "interrupted"}:
+                continue
+            kernel_ref = row.get("kernel_ref") or ""
+            meta = row.get("meta") or {}
+            if not kernel_ref or not meta.get("recover_outputs_available"):
+                continue
+            attempts = int(meta.get("auto_recovery_attempts") or 0)
+            if attempts >= 3:
+                continue
+            job_id = row.get("id")
+            if not job_id:
+                continue
+            with self._lock:
+                future = self._futures.get(job_id)
+                if future is not None and not future.done():
+                    continue
+                self.db.update_job(
+                    job_id,
+                    status="recovering",
+                    error="",
+                    meta_json={
+                        **meta,
+                        "auto_recovery_attempts": attempts + 1,
+                        "last_auto_recovery_at": time.time(),
+                    },
+                )
+                self._futures[job_id] = self.executor.submit(self._recover_remote_job, job_id)
+                resumed += 1
+        return resumed
+
     def credentials_ready(self) -> bool:
         return bool(
             self.settings.kaggle_username
@@ -538,8 +573,14 @@ class KaggleController:
 
         self._run(["kernels", "list", "-m", "-p", "1"], timeout=120)
         resumed = self.resume_waiting_jobs()
+        recovered = self.resume_recoverable_outputs()
         mode = "API token" if api_token else "legacy key"
-        suffix = f" {resumed} job(s) en attente relancé(s)." if resumed else ""
+        parts = []
+        if resumed:
+            parts.append(f"{resumed} job(s) en attente relancé(s)")
+        if recovered:
+            parts.append(f"{recovered} récupération(s) d'output relancée(s)")
+        suffix = (" " + " • ".join(parts) + ".") if parts else ""
         return (
             f"Identifiants Kaggle validés ({mode})"
             + (" et sauvegardés dans le stockage privé configuré." if persist else ".")
