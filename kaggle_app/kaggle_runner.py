@@ -1009,6 +1009,48 @@ class KaggleController:
         return [job_id]
 
 
+    def _dataset_status(self, dataset_ref: str) -> tuple[str, str]:
+        output = self._run(["datasets", "status", dataset_ref], timeout=120)
+        match = re.search(
+            r"(?im)^\s*(?:dataset\s+)?status\s*[:=]\s*"
+            r"(ready|complete|completed|creating|pending|queued|error|failed)\s*$",
+            output or "",
+        )
+        token = match.group(1).lower() if match else ""
+        if not token:
+            standalone = {
+                line.strip().lower()
+                for line in (output or "").splitlines()
+                if line.strip().lower() in {
+                    "ready", "complete", "completed", "creating",
+                    "pending", "queued", "error", "failed",
+                }
+            }
+            if len(standalone) == 1:
+                token = next(iter(standalone))
+
+        groups = {
+            "ready": "ready", "complete": "ready", "completed": "ready",
+            "creating": "pending", "pending": "pending", "queued": "pending",
+            "error": "error", "failed": "error",
+        }
+        mentioned = {
+            groups[t.lower()]
+            for t in re.findall(
+                r"(?i)\b(ready|complete|completed|creating|pending|queued|error|failed)\b",
+                output or "",
+            )
+        }
+        if len(mentioned) > 1:
+            return "unknown", output
+        if token in {"ready", "complete", "completed"}:
+            return "ready", output
+        if token in {"creating", "pending", "queued"}:
+            return "pending", output
+        if token in {"error", "failed"}:
+            return "error", output
+        return "unknown", output
+
     def _prepare_dataset(self, job: dict[str, Any], folder: Path, dataset_ref: str | None = None) -> str:
         dataset_ref = dataset_ref or self._dataset_ref(job)
         config = self._job_config(job)
@@ -1050,11 +1092,10 @@ class KaggleController:
         deadline = time.time() + 900
         while time.time() < deadline:
             try:
-                out = self._run(["datasets", "status", dataset_ref], timeout=120)
-                low = out.lower()
-                if "error" in low or "failed" in low:
+                state, out = self._dataset_status(dataset_ref)
+                if state == "error":
                     raise RuntimeError(out)
-                if "ready" in low or "complete" in low or "completed" in low:
+                if state == "ready":
                     return dataset_ref
             except RuntimeError as exc:
                 if "404" not in str(exc).lower() and "not found" not in str(exc).lower():
