@@ -1460,3 +1460,28 @@ with tempfile.TemporaryDirectory() as td:
         KaggleController._cleanup_remote_refs = original_cleanup
 
 print("Persisted local preparation auto-resume passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root, storage_root=tmp / "media", db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local", worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1, cli_retries=1, kernel_timeout=60, accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False, keep_job_inputs=False,
+        keep_source_inputs_for_retry=True, share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    controller.db.create_job("lost-done", "image", "x", {})
+    controller.db.update_job("lost-done", status="done", kernel_ref="ci-user/still-complete")
+    controller._kernel_status = lambda ref: ("complete", "complete")
+    checked, recoverable = controller.reconcile_completed_jobs()
+    job = controller.db.get_job("lost-done")
+    assert checked == 1
+    assert recoverable == 1
+    assert job["status"] == "error"
+    assert job["meta"]["recover_outputs_available"] is True
+    assert job["meta"]["failed_phase"] == "local_artifacts_missing"
+    controller.executor.shutdown(wait=False)
+
+print("Lost completed output recovery detection passed.")
