@@ -22,6 +22,22 @@ def _sha1(path: Path) -> str:
             h.update(chunk)
     return h.hexdigest()
 
+def _atomic_copy_verified(src: Path, target: Path, expected_digest: str) -> None:
+    tmp = target.with_name(f".{target.name}.part")
+    try:
+        if tmp.exists():
+            tmp.unlink()
+        shutil.copy2(src, tmp)
+        if _sha1(tmp) != expected_digest:
+            raise RuntimeError(f"Checksum invalide après copie: {src.name}")
+        tmp.replace(target)
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
+
 def scan_outputs(source_dir: Path) -> list[tuple[Path, str]]:
     items: list[tuple[Path, str]] = []
     for src in sorted(source_dir.rglob("*")):
@@ -59,7 +75,7 @@ def import_outputs(job_id: str, source_dir: Path, storage_root: Path) -> list[tu
         target = dest / src.name
         if target.exists():
             target = dest / f"{target.stem}_{digest[:10]}{target.suffix}"
-        shutil.copy2(src, target)
+        _atomic_copy_verified(src, target, digest)
         existing_by_digest[digest] = target
         imported.append((target, kind_for(target)))
     return imported
