@@ -27,8 +27,10 @@ from .kaggle_protocol import (
 )
 from .kaggle_recovery import (
     auto_recovery_attempts,
+    classify_remote_recovery_failure,
     has_recoverable_outputs,
     keep_remote_kernel_for_retry,
+    preserve_kernel_after_execute_failure,
     recoverable_output_candidate,
     recovery_marked,
     remote_kernel_is_preserved,
@@ -330,38 +332,35 @@ class KaggleController:
                 missing_remote = self._remote_kernel_missing(exc)
                 remote_failed = isinstance(exc, RemoteKernelFailed)
                 auth_required = is_auth_cli_error(str(exc))
-                if auth_required:
-                    self.db.update_job(
-                        job_id,
-                        status="waiting_auth",
-                        error="Authentification Kaggle requise pour reprendre le kernel distant existant.",
-                        meta_json={
-                            **current_meta,
-                            "recover_outputs_available": True,
-                            "failed_phase": "auth_required",
-                            "remote_failure_confirmed": False,
-                        },
-                    )
-                else:
-                    self.db.update_job(
-                        job_id,
-                        status="error",
-                        error=(
+                (
+                    next_status,
+                    recover_outputs_available,
+                    failed_phase,
+                    remote_failure_confirmed,
+                ) = classify_remote_recovery_failure(
+                    auth_required=auth_required,
+                    missing_remote=missing_remote,
+                    remote_failed=remote_failed,
+                )
+                self.db.update_job(
+                    job_id,
+                    status=next_status,
+                    error=(
+                        "Authentification Kaggle requise pour reprendre le kernel distant existant."
+                        if auth_required
+                        else (
                             "Kernel Kaggle supprimé ou introuvable; utilise Relancer pour recalculer."
                             if missing_remote
                             else f"Recovery {type(exc).__name__}: {exc}"
-                        ),
-                        meta_json={
-                            **current_meta,
-                            "recover_outputs_available": not missing_remote and not remote_failed,
-                            "failed_phase": (
-                                "remote_missing" if missing_remote
-                                else "remote_failed" if remote_failed
-                                else "downloading"
-                            ),
-                            "remote_failure_confirmed": remote_failed,
-                        },
-                    )
+                        )
+                    ),
+                    meta_json={
+                        **current_meta,
+                        "recover_outputs_available": recover_outputs_available,
+                        "failed_phase": failed_phase,
+                        "remote_failure_confirmed": remote_failure_confirmed,
+                    },
+                )
         finally:
             current = self.db.get_job(job_id) or {}
             current_meta = current.get("meta") or {}
@@ -1309,10 +1308,11 @@ class KaggleController:
                 failed_phase = current.get("status") or ""
                 current_meta = current.get("meta") or {}
                 auth_required = is_auth_cli_error(str(exc))
-                preserve_kernel = bool(
-                    kernel_ref
-                    and failed_phase in {"submitting", "queued", "running", "downloading", "recovering"}
-                    and not isinstance(exc, RemoteKernelFailed)
+                remote_failed = isinstance(exc, RemoteKernelFailed)
+                preserve_kernel = preserve_kernel_after_execute_failure(
+                    kernel_ref=kernel_ref,
+                    failed_phase=failed_phase,
+                    remote_failed=remote_failed,
                 )
                 if auth_required:
                     self.db.update_job(
@@ -1339,7 +1339,7 @@ class KaggleController:
                             **current_meta,
                             "recover_outputs_available": preserve_kernel,
                             "failed_phase": failed_phase,
-                            "remote_failure_confirmed": isinstance(exc, RemoteKernelFailed),
+                            "remote_failure_confirmed": remote_failed,
                         },
                     )
         finally:
