@@ -38,6 +38,23 @@ textarea, input {font-size: 16px !important;}
 }
 """
 
+def _friendly_error(error):
+    raw = str(error or "").strip()
+    low = raw.lower()
+    if not raw:
+        return ""
+    if any(x in low for x in ("401", "403", "unauthorized", "forbidden", "authentication", "api token")):
+        return "Authentification Kaggle — vérifie KAGGLE_USERNAME et KAGGLE_API_TOKEN."
+    if any(x in low for x in ("429", "too many requests", "rate limit", "quota")):
+        return "Limite/quota Kaggle — attends puis relance le job."
+    if any(x in low for x in ("timeout", "timed out", "délai maximal")):
+        return "Timeout — Kaggle ou le worker a dépassé le délai prévu. Une relance est possible."
+    if any(x in low for x in ("introuvable", "illisible", "invalide", "requiert", "prompt est vide")):
+        return "Entrée invalide — corrige le prompt ou le média source avant de relancer."
+    if "worker" in low or "result.json" in low or "sans média" in low:
+        return "Worker Kaggle — consulte les logs du job pour le détail technique."
+    return raw[-500:]
+
 def _task_help(task):
     return {
         "image": "✨ **Création d’image** — écris un prompt. Aucun fichier source requis.",
@@ -91,7 +108,7 @@ def _format_job_row(j):
         _format_elapsed(end - created if created else 0),
         j["kernel_ref"],
         (j["prompt"] or "")[:90],
-        (j["error"] or "")[-180:],
+        _friendly_error(j.get("error"))[:180],
     ]
 
 def _filter_jobs(status_filter="Tous", task_filter="Tous", query=""):
@@ -150,7 +167,7 @@ def _submit_batch(prompts, negative, steps, cfg, seed, aspect):
         count = len([line for line in (prompts or "").splitlines() if line.strip()])
         return "\n".join(ids), f"Lot de {count} image(s) ajouté comme un seul job Kaggle.", _jobs_table()
     except Exception as e:
-        raise gr.Error(str(e))
+        raise gr.Error(_friendly_error(e))
 
 def _submit(task, prompt, negative, steps, cfg, seed, aspect, source, target):
     try:
@@ -167,7 +184,7 @@ def _submit(task, prompt, negative, steps, cfg, seed, aspect, source, target):
         )
         return job_id, f"Job {job_id} ajouté à la file Kaggle.", _jobs_table()
     except Exception as e:
-        raise gr.Error(str(e))
+        raise gr.Error(_friendly_error(e))
 
 def _load_job_to_form(job_id):
     j = controller.job(job_id)
@@ -265,7 +282,8 @@ def _refresh(job_id):
         status += f"\nStockage récupéré : {size / (1024**2):.1f} Mo"
     status += f"\nFichiers récupérés : {len(files)}"
     if j["error"]:
-        status += "\n" + j["error"]
+        status += "\nErreur : " + _friendly_error(j["error"])
+        status += "\nDétail technique : " + str(j["error"])[-1200:]
     return status, images, (videos[0] if videos else None), files, _jobs_table()
 
 def build_ui():
