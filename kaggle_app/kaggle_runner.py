@@ -1635,7 +1635,22 @@ class KaggleController:
         old = self.db.get_job(job_id)
         if not old:
             raise ValueError("Job introuvable.")
-        if old.get("status") in {"queued", "running", "submitting", "recovering", "downloading"}:
+        active_states = {
+            "preparing", "uploading_inputs", "submitting", "queued",
+            "waiting_auth", "running", "recovering", "downloading",
+            "cancel_requested",
+        }
+        if old.get("status") in active_states:
+            if old.get("status") == "waiting_auth":
+                if old.get("kernel_ref"):
+                    raise RuntimeError(
+                        "Ce job attend l'authentification pour reprendre son kernel Kaggle existant. "
+                        "Configure les identifiants au lieu de le relancer."
+                    )
+                raise RuntimeError(
+                    "Ce job attend l'authentification pour reprendre la file locale. "
+                    "Configure les identifiants au lieu de créer un doublon."
+                )
             raise RuntimeError("Ce job est encore actif.")
 
         meta = old.get("meta") or {}
