@@ -59,5 +59,7 @@ jobs:
         run: python scripts/test_kaggle_controller.py
       - name: Kaggle Studio UI smoke test
         run: python scripts/test_kaggle_ui_smoke.py
+      - name: Launcher import smoke test
+        run: python -c "import launch_kaggle_ui; print('Kaggle UI launcher import passed.')"
       - name: Kaggle CLI contract test
         run: python scripts/test_kaggle_cli_contract.py
