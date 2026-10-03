@@ -23,6 +23,13 @@ from .storage import import_outputs, scan_outputs
 TERMINAL_OK = ("complete", "completed")
 TERMINAL_BAD = ("error", "failed", "cancelled", "canceled")
 
+def _is_auth_cli_error(text: str) -> bool:
+    low = (text or "").lower()
+    return any(token in low for token in (
+        "401", "403", "unauthorized", "forbidden",
+        "authentication required", "invalid token", "api token",
+    ))
+
 def _is_transient_cli_error(text: str) -> bool:
     low = (text or "").lower()
     transient = (
@@ -320,6 +327,7 @@ class KaggleController:
             return
 
         try:
+            self.validate_current_credentials()
             self.db.update_job(job_id, status="recovering")
             started = time.time()
             while True:
@@ -386,25 +394,39 @@ class KaggleController:
                 current_meta = current.get("meta") or {}
                 missing_remote = self._remote_kernel_missing(exc)
                 remote_failed = isinstance(exc, RemoteKernelFailed)
-                self.db.update_job(
-                    job_id,
-                    status="error",
-                    error=(
-                        "Kernel Kaggle supprimé ou introuvable; utilise Relancer pour recalculer."
-                        if missing_remote
-                        else f"Recovery {type(exc).__name__}: {exc}"
-                    ),
-                    meta_json={
-                        **current_meta,
-                        "recover_outputs_available": not missing_remote and not remote_failed,
-                        "failed_phase": (
-                            "remote_missing" if missing_remote
-                            else "remote_failed" if remote_failed
-                            else "downloading"
+                auth_required = _is_auth_cli_error(str(exc))
+                if auth_required:
+                    self.db.update_job(
+                        job_id,
+                        status="waiting_auth",
+                        error="Authentification Kaggle requise pour reprendre le kernel distant existant.",
+                        meta_json={
+                            **current_meta,
+                            "recover_outputs_available": True,
+                            "failed_phase": "auth_required",
+                            "remote_failure_confirmed": False,
+                        },
+                    )
+                else:
+                    self.db.update_job(
+                        job_id,
+                        status="error",
+                        error=(
+                            "Kernel Kaggle supprimé ou introuvable; utilise Relancer pour recalculer."
+                            if missing_remote
+                            else f"Recovery {type(exc).__name__}: {exc}"
                         ),
-                        "remote_failure_confirmed": remote_failed,
-                    },
-                )
+                        meta_json={
+                            **current_meta,
+                            "recover_outputs_available": not missing_remote and not remote_failed,
+                            "failed_phase": (
+                                "remote_missing" if missing_remote
+                                else "remote_failed" if remote_failed
+                                else "downloading"
+                            ),
+                            "remote_failure_confirmed": remote_failed,
+                        },
+                    )
         finally:
             current = self.db.get_job(job_id) or {}
             current_meta = current.get("meta") or {}
@@ -450,6 +472,10 @@ class KaggleController:
 
     def resume_recoverable_outputs(self) -> int:
         if not self.credentials_ready():
+            return 0
+        try:
+            self.validate_current_credentials()
+        except Exception:
             return 0
         resumed = 0
         for row in self.db.list_jobs(500):
