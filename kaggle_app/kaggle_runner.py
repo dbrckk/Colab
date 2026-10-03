@@ -25,6 +25,12 @@ from .kaggle_protocol import (
     parse_kernel_status,
     remote_kernel_missing,
 )
+from .kaggle_recovery import (
+    auto_recovery_attempts,
+    keep_remote_kernel_for_retry,
+    recoverable_output_candidate,
+    startup_recovery_action,
+)
 from .storage import import_outputs, scan_outputs
 
 class JobCancelled(RuntimeError):
@@ -53,100 +59,49 @@ class KaggleController:
         self._recover_persisted_jobs()
 
     def _recover_persisted_jobs(self) -> None:
-        recoverable = {"submitting", "queued", "running", "recovering", "downloading"}
-        interrupted = {"preparing", "uploading_inputs"}
+        credentials_ready = self.credentials_ready()
         for row in self.db.list_jobs(200):
             job_id = row.get("id")
-            status = row.get("status")
+            if not job_id:
+                continue
+            action = startup_recovery_action(row, credentials_ready)
             kernel_ref = row.get("kernel_ref") or ""
-            if status in interrupted:
-                meta = row.get("meta") or {}
+            meta = row.get("meta") or {}
+
+            if action == "resume_local":
                 dataset_ref = meta.get("dataset_ref") or ""
-                # Source uploads are persisted before the job enters these
-                # states, so the local preparation phase is safe to replay.
-                if self.credentials_ready():
-                    if dataset_ref:
-                        try:
-                            self._cleanup_remote_refs("", dataset_ref)
-                        except Exception:
-                            pass
-                    self.db.update_job(
-                        job_id,
-                        status="queued",
-                        error="",
-                        meta_json={**meta, "dataset_ref": ""},
-                    )
-                    with self._lock:
-                        self._futures[job_id] = self.executor.submit(self._execute, job_id)
-                else:
-                    self.db.update_job(
-                        job_id,
-                        status="waiting_auth",
-                        error="En attente des identifiants Kaggle pour reprendre la préparation locale.",
-                    )
-            elif status in recoverable and kernel_ref:
-                if self.credentials_ready():
-                    with self._lock:
-                        self._futures[job_id] = self.executor.submit(self._recover_remote_job, job_id)
-                else:
-                    self.db.update_job(
-                        job_id,
-                        status="waiting_auth",
-                        error="En attente des identifiants Kaggle pour reprendre le kernel distant existant.",
-                    )
-            elif status in recoverable and not kernel_ref:
-                # A crash can happen between setting "submitting" and saving
-                # kernel_ref. Replaying preparation is safer than leaving a
-                # permanently stuck row; per-job kernel slugs are deterministic.
-                if self.credentials_ready():
-                    meta = row.get("meta") or {}
-                    dataset_ref = meta.get("dataset_ref") or ""
-                    if dataset_ref:
-                        try:
-                            self._cleanup_remote_refs("", dataset_ref)
-                        except Exception:
-                            pass
-                    self.db.update_job(
-                        job_id,
-                        status="queued",
-                        error="",
-                        meta_json={**meta, "dataset_ref": ""},
-                    )
-                    with self._lock:
-                        self._futures[job_id] = self.executor.submit(self._execute, job_id)
-                else:
-                    self.db.update_job(
-                        job_id,
-                        status="waiting_auth",
-                        error="En attente des identifiants Kaggle pour reprendre la file locale.",
-                    )
-            elif status in {"queued", "waiting_auth"} and not kernel_ref:
-                if self.credentials_ready():
-                    self.db.update_job(job_id, status="queued", error="")
-                    with self._lock:
-                        self._futures[job_id] = self.executor.submit(self._execute, job_id)
-                else:
-                    self.db.update_job(
-                        job_id,
-                        status="waiting_auth",
-                        error="En attente des identifiants Kaggle pour reprendre la file locale.",
-                    )
-            elif status == "waiting_auth" and kernel_ref:
-                if self.credentials_ready():
+                if dataset_ref:
+                    try:
+                        self._cleanup_remote_refs("", dataset_ref)
+                    except Exception:
+                        pass
+                self.db.update_job(
+                    job_id,
+                    status="queued",
+                    error="",
+                    meta_json={**meta, "dataset_ref": ""},
+                )
+                with self._lock:
+                    self._futures[job_id] = self.executor.submit(self._execute, job_id)
+            elif action == "wait_local_auth":
+                self.db.update_job(
+                    job_id,
+                    status="waiting_auth",
+                    error="En attente des identifiants Kaggle pour reprendre la préparation locale.",
+                )
+            elif action == "resume_remote":
+                if row.get("status") == "waiting_auth":
                     self.db.update_job(job_id, status="recovering", error="")
-                    with self._lock:
-                        self._futures[job_id] = self.executor.submit(
-                            self._recover_remote_job, job_id
-                        )
-            elif status in {"error", "interrupted"} and kernel_ref:
-                meta = row.get("meta") or {}
-                if not meta.get("recover_outputs_available"):
-                    continue
-                attempts = int(meta.get("auto_recovery_attempts") or 0)
-                if attempts >= 3:
-                    continue
-                if not self.credentials_ready():
-                    continue
+                with self._lock:
+                    self._futures[job_id] = self.executor.submit(self._recover_remote_job, job_id)
+            elif action == "wait_remote_auth":
+                self.db.update_job(
+                    job_id,
+                    status="waiting_auth",
+                    error="En attente des identifiants Kaggle pour reprendre le kernel distant existant.",
+                )
+            elif action == "resume_recoverable":
+                attempts = auto_recovery_attempts(row)
                 self.db.update_job(
                     job_id,
                     status="recovering",
@@ -407,10 +362,10 @@ class KaggleController:
         finally:
             current = self.db.get_job(job_id) or {}
             current_meta = current.get("meta") or {}
-            keep_for_retry = bool(
-                current.get("status") in {"error", "waiting_auth"}
-                and current_meta.get("recover_outputs_available")
-                and kernel_ref
+            keep_for_retry = keep_remote_kernel_for_retry(
+                str(current.get("status") or ""),
+                current_meta,
+                kernel_ref,
             )
             if keep_for_retry:
                 # The completed kernel is the recovery source. Keep it across
@@ -469,15 +424,11 @@ class KaggleController:
             return 0
         resumed = 0
         for row in self.db.list_jobs(500):
-            if row.get("status") not in {"error", "interrupted"}:
+            if not recoverable_output_candidate(row):
                 continue
             kernel_ref = row.get("kernel_ref") or ""
             meta = row.get("meta") or {}
-            if not kernel_ref or not meta.get("recover_outputs_available"):
-                continue
-            attempts = int(meta.get("auto_recovery_attempts") or 0)
-            if attempts >= 3:
-                continue
+            attempts = auto_recovery_attempts(row)
             job_id = row.get("id")
             if not job_id:
                 continue
