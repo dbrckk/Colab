@@ -32,6 +32,7 @@ from .kaggle_protocol import (
     remote_kernel_missing,
 )
 from .kaggle_inputs import validate_submission
+from .kaggle_kernel import write_kernel_bundle
 from .kaggle_outputs import validate_downloaded_outputs
 from .kaggle_recovery import (
     auto_recovery_attempts,
@@ -949,74 +950,15 @@ class KaggleController:
         username = self.settings.kaggle_username
         slug = slugify(f"qwen-studio-{job['id']}")
         kernel_ref = f"{username}/{slug}"
-
-        worker_source = self.settings.worker_path.read_text(encoding="utf-8")
-        cells = [
-            {
-                "cell_type": "markdown",
-                "metadata": {},
-                "source": [
-                    "# Qwen Kaggle Worker\n",
-                    "Notebook généré automatiquement par Qwen Kaggle Studio.\n",
-                ],
-            }
-        ]
-        if not dataset_ref:
-            inline_config = json.dumps(self._job_config(job), ensure_ascii=False)
-            bootstrap = (
-                "import json\n"
-                "from pathlib import Path\n"
-                f"_config = {inline_config!r}\n"
-                "Path('/kaggle/working/job_config.json').write_text(_config, encoding='utf-8')\n"
-            )
-            cells.append({
-                "cell_type": "code",
-                "execution_count": None,
-                "metadata": {},
-                "outputs": [],
-                "source": bootstrap.splitlines(keepends=True),
-            })
-        cells.append({
-            "cell_type": "code",
-            "execution_count": None,
-            "metadata": {},
-            "outputs": [],
-            "source": worker_source.splitlines(keepends=True),
-        })
-        notebook = {
-            "cells": cells,
-            "metadata": {
-                "kernelspec": {
-                    "display_name": "Python 3",
-                    "language": "python",
-                    "name": "python3",
-                },
-                "language_info": {"name": "python", "version": "3.11"},
-            },
-            "nbformat": 4,
-            "nbformat_minor": 5,
-        }
-        (folder / "job.ipynb").write_text(
-            json.dumps(notebook, ensure_ascii=False),
-            encoding="utf-8",
+        write_kernel_bundle(
+            folder,
+            kernel_ref=kernel_ref,
+            title=slug,
+            worker_source=self.settings.worker_path.read_text(encoding="utf-8"),
+            job_config=self._job_config(job),
+            dataset_ref=dataset_ref,
+            accelerator=self.settings.accelerator,
         )
-
-        metadata = {
-            "id": kernel_ref,
-            "title": slug,
-            "code_file": "job.ipynb",
-            "language": "python",
-            "kernel_type": "notebook",
-            "is_private": True,
-            "enable_gpu": True,
-            "enable_internet": True,
-            "machine_shape": self.settings.accelerator,
-            "dataset_sources": [dataset_ref] if dataset_ref else [],
-            "competition_sources": [],
-            "kernel_sources": [],
-            "model_sources": [],
-        }
-        (folder / "kernel-metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
         return kernel_ref
 
     def _download_validated_outputs(
