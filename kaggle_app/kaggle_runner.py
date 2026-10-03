@@ -40,6 +40,7 @@ from .kaggle_jobs import (
     dataset_ref as build_dataset_ref,
     kernel_ref as build_kernel_ref,
     needs_dataset,
+    slugify,
 )
 from .kaggle_kernel import write_kernel_bundle
 from .kaggle_monitor import wait_for_kernel
@@ -1047,28 +1048,6 @@ class KaggleController:
                 )
 
                 self._check_cancelled(job_id)
-                    if time.time() - started > self.settings.kernel_timeout + 1200:
-                        raise TimeoutError("Le job Kaggle a dépassé le délai maximal.")
-                    state, raw = self._kernel_status(kernel_ref)
-                    self.db.update_job(
-                        job_id,
-                        status=state,
-                        meta_json={
-                            **job.get("meta", {}),
-                            "dataset_ref": dataset_ref,
-                            "kaggle_status": raw[-1500:],
-                        },
-                    )
-                    if state == "complete":
-                        break
-                    if state == "error":
-                        try:
-                            logs = self._run(["kernels", "logs", kernel_ref], timeout=180)
-                        except Exception:
-                            logs = raw
-                        raise RemoteKernelFailed("Kaggle a signalé une erreur:\n" + logs[-7000:])
-                    time.sleep(max(5, self.settings.poll_seconds))
-
                 self._check_cancelled(job_id)
                 download = work / "download"
                 self.db.update_job(job_id, status="downloading")
