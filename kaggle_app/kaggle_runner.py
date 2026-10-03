@@ -560,12 +560,20 @@ class KaggleController:
 
         if persist:
             env_path = self.settings.env_file
-            lines = [f"KAGGLE_USERNAME={username}"]
+            credential_keys = {"KAGGLE_USERNAME", "KAGGLE_API_TOKEN", "KAGGLE_KEY"}
+            preserved = []
+            if env_path.exists():
+                for line in env_path.read_text(encoding="utf-8").splitlines():
+                    stripped = line.strip()
+                    key = stripped.split("=", 1)[0].strip() if "=" in stripped else ""
+                    if key not in credential_keys:
+                        preserved.append(line)
+            lines = preserved + [f"KAGGLE_USERNAME={username}"]
             if api_token:
                 lines.append(f"KAGGLE_API_TOKEN={api_token}")
             else:
                 lines.append(f"KAGGLE_KEY={legacy_key}")
-            env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            env_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
             try:
                 os.chmod(env_path, 0o600)
             except Exception:
