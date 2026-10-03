@@ -33,6 +33,12 @@ from .kaggle_protocol import (
 )
 from .kaggle_dataset import write_dataset_bundle
 from .kaggle_inputs import validate_submission
+from .kaggle_jobs import (
+    build_job_config,
+    dataset_ref as build_dataset_ref,
+    kernel_ref as build_kernel_ref,
+    needs_dataset,
+)
 from .kaggle_kernel import write_kernel_bundle
 from .kaggle_outputs import validate_downloaded_outputs
 from .kaggle_recovery import (
@@ -54,11 +60,6 @@ class JobCancelled(RuntimeError):
 class RemoteKernelFailed(RuntimeError):
     """Kaggle explicitly reported a terminal kernel failure."""
     pass
-
-def slugify(value: str) -> str:
-    value = re.sub(r"[^a-z0-9-]+", "-", value.lower()).strip("-")
-    value = re.sub(r"-+", "-", value)
-    return value[:48] or "qwen-job"
 
 class KaggleController:
     def __init__(self, settings: Settings = SETTINGS):
@@ -813,21 +814,13 @@ class KaggleController:
         return job_id
 
     def _job_config(self, job: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "job_id": job["id"],
-            "task": job["task"],
-            "prompt": job.get("prompt", ""),
-            **(job.get("meta") or {}),
-        }
+        return build_job_config(job)
 
     def _needs_dataset(self, job: dict[str, Any]) -> bool:
-        meta = job.get("meta") or {}
-        return bool(meta.get("source_image") or meta.get("target_video"))
+        return needs_dataset(job)
 
     def _dataset_ref(self, job: dict[str, Any]) -> str:
-        username = self.settings.kaggle_username
-        dataset_slug = slugify(f"qwen-input-{job['id']}")
-        return f"{username}/{dataset_slug}"
+        return build_dataset_ref(self.settings.kaggle_username, job["id"])
 
     def _cleanup_remote_refs(
         self,
@@ -933,9 +926,10 @@ class KaggleController:
         return dataset_ref
 
     def _prepare_kernel(self, job: dict[str, Any], folder: Path, dataset_ref: str) -> str:
-        username = self.settings.kaggle_username
-        slug = slugify(f"qwen-studio-{job['id']}")
-        kernel_ref = f"{username}/{slug}"
+        kernel_ref, slug = build_kernel_ref(
+            self.settings.kaggle_username,
+            job["id"],
+        )
         write_kernel_bundle(
             folder,
             kernel_ref=kernel_ref,
