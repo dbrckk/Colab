@@ -550,6 +550,18 @@ class KaggleController:
         if not api_token and not legacy_key:
             raise ValueError("Ajoute KAGGLE_API_TOKEN (recommandé) ou l'ancien KAGGLE_KEY.")
 
+        def _safe_env_value(name: str, value: str) -> None:
+            if any(ch in value for ch in ("\\n", "\\r", "\\x00")):
+                raise ValueError(f"{name} contient un caractère interdit.")
+            if len(value) > 4096:
+                raise ValueError(f"{name} est anormalement long.")
+
+        _safe_env_value("KAGGLE_USERNAME", username)
+        _safe_env_value("KAGGLE_API_TOKEN", api_token)
+        _safe_env_value("KAGGLE_KEY", legacy_key)
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", username):
+            raise ValueError("KAGGLE_USERNAME contient des caractères non valides.")
+
         os.environ["KAGGLE_USERNAME"] = username
         if api_token:
             os.environ["KAGGLE_API_TOKEN"] = api_token
