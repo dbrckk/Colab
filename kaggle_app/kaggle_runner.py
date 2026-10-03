@@ -18,6 +18,12 @@ from typing import Any
 
 from .config import SETTINGS, Settings
 from .db import JobDB
+from .kaggle_auth import (
+    auth_cache_valid,
+    credential_fingerprint,
+    credentials_ready as auth_credentials_ready,
+    validate_credential_fields,
+)
 from .kaggle_protocol import (
     is_auth_cli_error,
     is_transient_cli_error,
@@ -453,26 +459,24 @@ class KaggleController:
         return resumed
 
     def credentials_ready(self) -> bool:
-        return bool(
-            self.settings.kaggle_username
-            and (self.settings.kaggle_api_token or self.settings.kaggle_key)
+        return auth_credentials_ready(
+            self.settings.kaggle_username,
+            self.settings.kaggle_api_token,
+            self.settings.kaggle_key,
         )
 
     def _credential_fingerprint(self) -> str:
-        username = self.settings.kaggle_username
-        secret = self.settings.kaggle_api_token or self.settings.kaggle_key
-        if not username or not secret:
-            return ""
-        return hashlib.sha256(f"{username}\0{secret}".encode("utf-8")).hexdigest()
+        return credential_fingerprint(
+            self.settings.kaggle_username,
+            self.settings.kaggle_api_token or self.settings.kaggle_key,
+        )
 
     def credentials_recently_validated(self, max_age_seconds: int = 300) -> bool:
-        fingerprint = self._credential_fingerprint()
-        if not fingerprint:
-            return False
-        return bool(
-            self._auth_cache.get("fingerprint") == fingerprint
-            and time.time() - float(self._auth_cache.get("ts") or 0)
-            <= max(0, int(max_age_seconds))
+        return auth_cache_valid(
+            self._auth_cache,
+            self._credential_fingerprint(),
+            now=time.time(),
+            max_age_seconds=max_age_seconds,
         )
 
     def validate_current_credentials(self, max_age_seconds: int = 300) -> None:
@@ -583,9 +587,6 @@ class KaggleController:
         username = (username or "").strip()
         api_token = (api_token or "").strip()
         legacy_key = (legacy_key or "").strip()
-        if not username:
-            raise ValueError("KAGGLE_USERNAME est requis pour créer les kernels/datasets.")
-
         # Password fields intentionally stay blank in the UI. If Colab Secrets
         # or the current process already provided valid credentials, allow the
         # user to test/persist them without copying the secret back into the UI.
@@ -594,20 +595,7 @@ class KaggleController:
             api_token = self.settings.kaggle_api_token
             legacy_key = "" if api_token else self.settings.kaggle_key
 
-        if not api_token and not legacy_key:
-            raise ValueError("Ajoute KAGGLE_API_TOKEN (recommandé) ou l'ancien KAGGLE_KEY.")
-
-        def _safe_env_value(name: str, value: str) -> None:
-            if any(ch in value for ch in ("\\n", "\\r", "\\x00")):
-                raise ValueError(f"{name} contient un caractère interdit.")
-            if len(value) > 4096:
-                raise ValueError(f"{name} est anormalement long.")
-
-        _safe_env_value("KAGGLE_USERNAME", username)
-        _safe_env_value("KAGGLE_API_TOKEN", api_token)
-        _safe_env_value("KAGGLE_KEY", legacy_key)
-        if not re.fullmatch(r"[A-Za-z0-9_.-]+", username):
-            raise ValueError("KAGGLE_USERNAME contient des caractères non valides.")
+        validate_credential_fields(username, api_token, legacy_key)
 
         credential_keys = ("KAGGLE_USERNAME", "KAGGLE_API_TOKEN", "KAGGLE_KEY")
         previous_env = {key: os.environ.get(key) for key in credential_keys}
