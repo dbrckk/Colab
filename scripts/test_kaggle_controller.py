@@ -1277,3 +1277,35 @@ with tempfile.TemporaryDirectory() as td:
     assert controller.db.get_job("recover-only")["status"] == "recovering"
 
 print("Output-only recovery scheduling passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root, storage_root=tmp / "media", db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local", worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1, cli_retries=1, kernel_timeout=60, accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=True, keep_job_inputs=False,
+        keep_source_inputs_for_retry=True, share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    controller.db.create_job("recover-repeat", "image", "x", {})
+    controller.db.update_job(
+        "recover-repeat", status="error", kernel_ref="ci-user/completed-kernel",
+        meta_json={"recover_outputs_available": True, "failed_phase": "downloading"},
+    )
+    controller._kernel_status = lambda ref: ("complete", "complete")
+    cleanup_calls = []
+    controller._cleanup_remote_refs = lambda kernel_ref="", dataset_ref="", force=False: cleanup_calls.append(
+        (kernel_ref, dataset_ref, force)
+    )
+    controller._run = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("temporary download failure"))
+    controller._recover_remote_job("recover-repeat")
+    recovered = controller.db.get_job("recover-repeat")
+    assert recovered["status"] == "error"
+    assert recovered["meta"]["recover_outputs_available"] is True
+    assert recovered["kernel_ref"] == "ci-user/completed-kernel"
+    assert not any(call[0] == "ci-user/completed-kernel" for call in cleanup_calls)
+    controller.executor.shutdown(wait=False)
+
+print("Repeated output recovery retention passed.")
