@@ -3502,3 +3502,79 @@ with tempfile.TemporaryDirectory() as td:
     controller.executor.shutdown(wait=False)
 
 print("Exhausted Kaggle output retries fail closed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root, storage_root=tmp / "media", db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local", worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1, cli_retries=1, kernel_timeout=60, accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False, delete_remote_dataset=True,
+        keep_job_inputs=False, keep_source_inputs_for_retry=True, share_gradio=False,
+    )
+    seed = JobDB(settings.db_path)
+    seed.create_job("remote-waits-auth", "image", "x", {})
+    seed.update_job(
+        "remote-waits-auth", status="running", kernel_ref="ci-user/existing-kernel"
+    )
+    old_values = {key: os.environ.pop(key, None) for key in (
+        "KAGGLE_USERNAME", "KAGGLE_API_TOKEN", "KAGGLE_KEY"
+    )}
+    try:
+        controller = KaggleController(settings)
+        controller.executor.shutdown(wait=True)
+        row = controller.db.get_job("remote-waits-auth")
+        assert row["status"] == "waiting_auth"
+        assert row["kernel_ref"] == "ci-user/existing-kernel"
+        assert "kernel distant existant" in row["error"]
+    finally:
+        for key, value in old_values.items():
+            if value is not None:
+                os.environ[key] = value
+
+print("Remote kernel waits safely for authentication after restart.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root, storage_root=tmp / "media", db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local", worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1, cli_retries=1, kernel_timeout=60, accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False, delete_remote_dataset=True,
+        keep_job_inputs=False, keep_source_inputs_for_retry=True, share_gradio=False,
+    )
+    old_values = {key: os.environ.pop(key, None) for key in (
+        "KAGGLE_USERNAME", "KAGGLE_API_TOKEN", "KAGGLE_KEY"
+    )}
+    try:
+        controller = KaggleController(settings)
+        controller.db.create_job("resume-existing-kernel", "image", "x", {})
+        controller.db.update_job(
+            "resume-existing-kernel",
+            status="waiting_auth",
+            kernel_ref="ci-user/existing-kernel",
+        )
+        recovered = []
+        executed = []
+        controller._recover_remote_job = lambda job_id: recovered.append(job_id)
+        controller._execute = lambda job_id: executed.append(job_id)
+        os.environ["KAGGLE_USERNAME"] = "ci-user"
+        os.environ["KAGGLE_API_TOKEN"] = "ci-token"
+        count = controller.resume_waiting_jobs()
+        controller.executor.shutdown(wait=True)
+        row = controller.db.get_job("resume-existing-kernel")
+        assert count == 1
+        assert recovered == ["resume-existing-kernel"]
+        assert executed == []
+        assert row["status"] == "recovering"
+        assert row["kernel_ref"] == "ci-user/existing-kernel"
+    finally:
+        for key in ("KAGGLE_USERNAME", "KAGGLE_API_TOKEN", "KAGGLE_KEY"):
+            os.environ.pop(key, None)
+        for key, value in old_values.items():
+            if value is not None:
+                os.environ[key] = value
+
+print("Authentication resumes existing remote kernel without recompute.")
