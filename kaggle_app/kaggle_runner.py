@@ -1432,21 +1432,31 @@ class KaggleController:
         shutil.rmtree(work, ignore_errors=True)
         work.mkdir(parents=True, exist_ok=True)
         try:
+            media_dir = work / "media"
+            media_dir.mkdir()
+            exported_artifacts = []
+            for artifact in artifacts:
+                src = Path(artifact.get("path") or "")
+                if not src.exists() or not src.is_file():
+                    continue
+                target = media_dir / src.name
+                shutil.copy2(src, target)
+                exported_artifacts.append({
+                    "name": target.name,
+                    "kind": artifact.get("kind") or "file",
+                    "size": int(target.stat().st_size),
+                    "sha256": self._hash_file(target),
+                })
             manifest = {
                 "job": job,
                 "artifacts": artifacts,
+                "exported_artifacts": exported_artifacts,
                 "exported_at": time.strftime("%Y-%m-%d %H:%M:%S"),
             }
             (work / "job.json").write_text(
                 json.dumps(manifest, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
-            media_dir = work / "media"
-            media_dir.mkdir()
-            for artifact in artifacts:
-                src = Path(artifact.get("path") or "")
-                if src.exists() and src.is_file():
-                    shutil.copy2(src, media_dir / src.name)
             archive_base = export_root / job_id
             archive_path = shutil.make_archive(str(archive_base), "zip", root_dir=work)
             return archive_path
