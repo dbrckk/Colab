@@ -3775,3 +3775,76 @@ with tempfile.TemporaryDirectory() as td:
     controller.executor.shutdown(wait=False)
 
 print("Kaggle dataset status parser ambiguity protection passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root, storage_root=tmp / "media", db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local", worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1, cli_retries=1, kernel_timeout=60, accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False, delete_remote_dataset=True,
+        keep_job_inputs=False, keep_source_inputs_for_retry=True, share_gradio=False,
+    )
+    old_values = {key: os.environ.get(key) for key in (
+        "KAGGLE_USERNAME", "KAGGLE_API_TOKEN", "KAGGLE_KEY"
+    )}
+    os.environ["KAGGLE_USERNAME"] = "cache-user"
+    os.environ["KAGGLE_API_TOKEN"] = "cache-token"
+    os.environ.pop("KAGGLE_KEY", None)
+    controller = KaggleController(settings)
+    calls = {"count": 0}
+    controller._run = lambda *args, **kwargs: calls.__setitem__("count", calls["count"] + 1) or "ok"
+    try:
+        controller.validate_current_credentials(max_age_seconds=300)
+        controller.validate_current_credentials(max_age_seconds=300)
+        assert calls["count"] == 1
+
+        os.environ["KAGGLE_API_TOKEN"] = "changed-token"
+        controller.validate_current_credentials(max_age_seconds=300)
+        assert calls["count"] == 2
+    finally:
+        controller.executor.shutdown(wait=False)
+        for key, value in old_values.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+print("Kaggle credential validation cache and fingerprint invalidation passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root, storage_root=tmp / "media", db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local", worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1, cli_retries=1, kernel_timeout=60, accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False, delete_remote_dataset=True,
+        keep_job_inputs=False, keep_source_inputs_for_retry=True, share_gradio=False,
+    )
+    old_values = {key: os.environ.get(key) for key in (
+        "KAGGLE_USERNAME", "KAGGLE_API_TOKEN", "KAGGLE_KEY"
+    )}
+    os.environ["KAGGLE_USERNAME"] = "bad-user"
+    os.environ["KAGGLE_API_TOKEN"] = "expired-token"
+    os.environ.pop("KAGGLE_KEY", None)
+    controller = KaggleController(settings)
+    controller._run = lambda *args, **kwargs: (_ for _ in ()).throw(
+        RuntimeError("401 Unauthorized")
+    )
+    before = len(controller.jobs(100))
+    try:
+        controller.submit("image", "test prompt")
+        raise AssertionError("job created with invalid Kaggle credentials")
+    except RuntimeError as exc:
+        assert "401" in str(exc)
+    assert len(controller.jobs(100)) == before
+    controller.executor.shutdown(wait=False)
+    for key, value in old_values.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+
+print("Invalid Kaggle credentials are rejected before job persistence.")
