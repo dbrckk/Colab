@@ -69,9 +69,12 @@ def recoverable_output_candidate(row: dict[str, Any]) -> bool:
     return auto_recovery_attempts(row) < MAX_AUTO_RECOVERY_ATTEMPTS
 
 
+def recovery_marked(row: dict[str, Any]) -> bool:
+    return bool((row.get("meta") or {}).get("recover_outputs_available"))
+
+
 def has_recoverable_outputs(row: dict[str, Any]) -> bool:
-    meta = row.get("meta") or {}
-    return bool(row.get("kernel_ref") and meta.get("recover_outputs_available"))
+    return bool(row.get("kernel_ref") and recovery_marked(row))
 
 
 def remote_kernel_is_preserved(row: dict[str, Any]) -> bool:
