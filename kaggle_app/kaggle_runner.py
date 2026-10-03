@@ -574,6 +574,15 @@ class KaggleController:
         legacy_key = (legacy_key or "").strip()
         if not username:
             raise ValueError("KAGGLE_USERNAME est requis pour créer les kernels/datasets.")
+
+        # Password fields intentionally stay blank in the UI. If Colab Secrets
+        # or the current process already provided valid credentials, allow the
+        # user to test/persist them without copying the secret back into the UI.
+        current_username = self.settings.kaggle_username
+        if not api_token and not legacy_key and username == current_username:
+            api_token = self.settings.kaggle_api_token
+            legacy_key = "" if api_token else self.settings.kaggle_key
+
         if not api_token and not legacy_key:
             raise ValueError("Ajoute KAGGLE_API_TOKEN (recommandé) ou l'ancien KAGGLE_KEY.")
 
