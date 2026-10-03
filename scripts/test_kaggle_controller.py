@@ -1734,7 +1734,9 @@ with tempfile.TemporaryDirectory() as td:
     os.environ["KAGGLE_API_TOKEN"] = "ci-token"
     controller = KaggleController(settings)
     original_execute = controller._execute
+    original_validate_credentials = controller.validate_current_credentials
     controller._execute = lambda job_id: None
+    controller.validate_current_credentials = lambda max_age_seconds=300: None
     try:
         ids = controller.submit_batch("first\n\nsecond\nthird", seed=100)
         assert len(ids) == 1
@@ -1750,6 +1752,7 @@ with tempfile.TemporaryDirectory() as td:
             pass
     finally:
         controller._execute = original_execute
+        controller.validate_current_credentials = original_validate_credentials
         controller.executor.shutdown(wait=False)
 
 print("Batch submission validation passed.")
