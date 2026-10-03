@@ -30,6 +30,7 @@ from .kaggle_recovery import (
     has_recoverable_outputs,
     keep_remote_kernel_for_retry,
     recoverable_output_candidate,
+    recovery_marked,
     remote_kernel_is_preserved,
     startup_recovery_action,
 )
@@ -1441,7 +1442,7 @@ class KaggleController:
         removed = 0
         for row in self.db.list_jobs(100000):
             meta = row.get("meta") or {}
-            if not has_recoverable_outputs(row):
+            if not recovery_marked(row):
                 continue
             if float(row.get("updated_at") or 0) >= cutoff:
                 continue
@@ -1626,7 +1627,7 @@ class KaggleController:
 
         jobs = self.db.list_jobs(1000)
         waiting_auth = sum(1 for row in jobs if row.get("status") == "waiting_auth")
-        recoverable = sum(1 for row in jobs if has_recoverable_outputs(row))
+        recoverable = sum(1 for row in jobs if recovery_marked(row))
         remote_preserved = sum(1 for row in jobs if remote_kernel_is_preserved(row))
         if waiting_auth:
             lines.append(f"⚠️ {waiting_auth} job(s) attendent l'authentification.")
