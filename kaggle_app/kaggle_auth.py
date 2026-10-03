@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
+import uuid
+from pathlib import Path
 from typing import Any
 
 
@@ -54,3 +57,51 @@ def validate_credential_fields(username: str, api_token: str, legacy_key: str) -
 
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", username):
         raise ValueError("KAGGLE_USERNAME contient des caractères non valides.")
+
+
+CREDENTIAL_KEYS = ("KAGGLE_USERNAME", "KAGGLE_API_TOKEN", "KAGGLE_KEY")
+
+
+def write_credential_env(
+    env_path: Path,
+    *,
+    username: str,
+    api_token: str,
+    legacy_key: str,
+) -> None:
+    preserved: list[str] = []
+    credential_key_set = set(CREDENTIAL_KEYS)
+
+    if env_path.exists():
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            key = stripped.split("=", 1)[0].strip() if "=" in stripped else ""
+            if key not in credential_key_set:
+                preserved.append(line)
+
+    lines = preserved + [f"KAGGLE_USERNAME={username}"]
+    if api_token:
+        lines.append(f"KAGGLE_API_TOKEN={api_token}")
+    else:
+        lines.append(f"KAGGLE_KEY={legacy_key}")
+
+    env_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = "\n".join(lines).rstrip() + "\n"
+    tmp_env = env_path.with_name(f".{env_path.name}.{uuid.uuid4().hex[:8]}.part")
+
+    try:
+        tmp_env.write_text(payload, encoding="utf-8")
+        try:
+            os.chmod(tmp_env, 0o600)
+        except Exception:
+            pass
+        os.replace(tmp_env, env_path)
+        try:
+            os.chmod(env_path, 0o600)
+        except Exception:
+            pass
+    finally:
+        try:
+            tmp_env.unlink(missing_ok=True)
+        except OSError:
+            pass
