@@ -272,8 +272,14 @@ def _refresh(job_id):
         attempts = int(job_meta.get("auto_recovery_attempts") or 0)
         status += "\nOutput Kaggle conservé : récupération sans recalcul disponible."
         status += f" Tentatives automatiques : {min(attempts, 3)}/3."
+        if job_meta.get("remote_failure_confirmed") is False and job_meta.get("failed_phase") in {
+            "submitting", "queued", "running", "downloading", "recovering"
+        }:
+            status += "\nLe kernel distant a été conservé par précaution : la panne locale/réseau ne prouve pas un échec du calcul Kaggle."
         if attempts >= 3:
             status += " Limite automatique atteinte : utilise Récupérer sans recalcul pour réessayer manuellement."
+    elif job_meta.get("remote_failure_confirmed"):
+        status += "\nKaggle a confirmé un échec terminal du kernel : aucun faux résultat récupérable n'est annoncé."
     result_manifest = job_meta.get("result_manifest") or {}
     if result_manifest:
         details = []
