@@ -1526,3 +1526,40 @@ with tempfile.TemporaryDirectory() as td:
     controller.executor.shutdown(wait=False)
 
 print("Unconfirmed lost-output state validation passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root, storage_root=tmp / "media", db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local", worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1, cli_retries=1, kernel_timeout=60, accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False, keep_job_inputs=False,
+        keep_source_inputs_for_retry=True, share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    image = tmp / "image.png"
+    image.write_bytes(base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
+    ))
+    import hashlib as _hashlib
+    digest = _hashlib.sha256(image.read_bytes()).hexdigest()
+    result = tmp / "result.json"
+    result.write_text(json.dumps({
+        "status": "done", "files": ["image.png"],
+        "output_manifest": [{"name": "image.png", "size": image.stat().st_size, "sha256": digest}],
+    }), encoding="utf-8")
+    job = {"task": "image", "meta": {}}
+    parsed = controller._validate_downloaded_outputs(job, [(result, "file"), (image, "image")])
+    assert parsed["output_manifest"][0]["sha256"] == digest
+    bad = json.loads(result.read_text())
+    bad["output_manifest"][0]["sha256"] = "0" * 64
+    result.write_text(json.dumps(bad), encoding="utf-8")
+    try:
+        controller._validate_downloaded_outputs(job, [(result, "file"), (image, "image")])
+        raise AssertionError("corrupt checksum accepted")
+    except RuntimeError as exc:
+        assert "checksum invalide" in str(exc)
+    controller.executor.shutdown(wait=False)
+
+print("SHA-256 output manifest validation passed.")
