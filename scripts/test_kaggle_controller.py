@@ -3401,3 +3401,103 @@ with tempfile.TemporaryDirectory() as td:
     controller.executor.shutdown(wait=False)
 
 print("Unknown Kaggle status is fail-safe instead of assumed running.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root, storage_root=tmp / "media", db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local", worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1, cli_retries=1, kernel_timeout=60, accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False, delete_remote_dataset=True,
+        keep_job_inputs=False, keep_source_inputs_for_retry=True, share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    controller.db.create_job("download-retry", "image", "x", {})
+    job = controller.db.get_job("download-retry")
+    calls = {"count": 0}
+    original_sleep = time.sleep
+
+    def fake_output(args, **kwargs):
+        if args[:2] != ["kernels", "output"]:
+            return ""
+        calls["count"] += 1
+        out_dir = Path(args[args.index("-p") + 1])
+        out_dir.mkdir(parents=True, exist_ok=True)
+        if calls["count"] == 1:
+            (out_dir / "stale.bin").write_bytes(b"partial")
+            (out_dir / "result.json").write_text(
+                json.dumps({"status": "done", "files": ["image.png"]}),
+                encoding="utf-8",
+            )
+            return ""
+        (out_dir / "image.png").write_bytes(base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
+        ))
+        (out_dir / "result.json").write_text(
+            json.dumps({"status": "done", "files": ["image.png"]}),
+            encoding="utf-8",
+        )
+        return ""
+
+    controller._run = fake_output
+    try:
+        time.sleep = lambda *_args, **_kwargs: None
+        download = tmp / "download"
+        staged, manifest = controller._download_validated_outputs(
+            job, "ci-user/kernel", download, attempts=2
+        )
+    finally:
+        time.sleep = original_sleep
+    assert calls["count"] == 2
+    assert manifest["status"] == "done"
+    assert (download / "image.png").is_file()
+    assert not (download / "stale.bin").exists()
+    assert any(path.name == "image.png" and kind == "image" for path, kind in staged)
+    controller.executor.shutdown(wait=False)
+
+print("Validated Kaggle output retry from clean directory passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root, storage_root=tmp / "media", db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local", worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1, cli_retries=1, kernel_timeout=60, accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False, delete_remote_dataset=True,
+        keep_job_inputs=False, keep_source_inputs_for_retry=True, share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    controller.db.create_job("download-exhausted", "image", "x", {})
+    job = controller.db.get_job("download-exhausted")
+    calls = {"count": 0}
+    original_sleep = time.sleep
+
+    def always_partial(args, **kwargs):
+        if args[:2] == ["kernels", "output"]:
+            calls["count"] += 1
+            out_dir = Path(args[args.index("-p") + 1])
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / "result.json").write_text(
+                json.dumps({"status": "done", "files": ["missing.png"]}),
+                encoding="utf-8",
+            )
+        return ""
+
+    controller._run = always_partial
+    try:
+        time.sleep = lambda *_args, **_kwargs: None
+        try:
+            controller._download_validated_outputs(
+                job, "ci-user/kernel", tmp / "download", attempts=3
+            )
+            raise AssertionError("incomplete Kaggle output accepted")
+        except RuntimeError as exc:
+            assert "après 3 tentative" in str(exc)
+    finally:
+        time.sleep = original_sleep
+    assert calls["count"] == 3
+    controller.executor.shutdown(wait=False)
+
+print("Exhausted Kaggle output retries fail closed.")
