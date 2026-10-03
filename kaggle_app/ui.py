@@ -444,7 +444,12 @@ def build_ui():
             lib_export = gr.File(label="Archive du job")
 
         with gr.Tab("⚙️ Paramètres Kaggle"):
-            ready = "✅ Kaggle prêt" if controller.credentials_ready() else "❌ Kaggle non configuré"
+            if controller.credentials_recently_validated():
+                ready = "✅ Kaggle prêt"
+            elif controller.credentials_ready():
+                ready = "⚠️ Kaggle configuré — à valider"
+            else:
+                ready = "❌ Kaggle non configuré"
             gr.Markdown(
                 "Les identifiants restent dans le processus local. "
                 "Si tu coches la sauvegarde, ils sont écrits dans .env.local, ignoré par Git."
