@@ -1346,6 +1346,7 @@ class KaggleController:
         dataset_ref = ""
         try:
             self._check_cancelled(job_id)
+            self.validate_current_credentials()
             self.db.update_job(job_id, status="preparing")
             with tempfile.TemporaryDirectory(prefix=f"qwen-kaggle-{job_id}-") as td:
                 work = Path(td)
