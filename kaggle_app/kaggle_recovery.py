@@ -67,3 +67,20 @@ def recoverable_output_candidate(row: dict[str, Any]) -> bool:
     if not meta.get("recover_outputs_available"):
         return False
     return auto_recovery_attempts(row) < MAX_AUTO_RECOVERY_ATTEMPTS
+
+
+def has_recoverable_outputs(row: dict[str, Any]) -> bool:
+    meta = row.get("meta") or {}
+    return bool(row.get("kernel_ref") and meta.get("recover_outputs_available"))
+
+
+def remote_kernel_is_preserved(row: dict[str, Any]) -> bool:
+    if not row.get("kernel_ref"):
+        return False
+    status = row.get("status")
+    if status in {"waiting_auth", "recovering", "downloading"}:
+        return True
+    return bool(
+        status in RECOVERABLE_ERROR_STATES
+        and (row.get("meta") or {}).get("recover_outputs_available")
+    )
