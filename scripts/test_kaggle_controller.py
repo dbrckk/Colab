@@ -2914,3 +2914,33 @@ with tempfile.TemporaryDirectory() as td:
     controller.executor.shutdown(wait=False)
 
 print("Export SHA-256 manifest validation passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root, storage_root=tmp / "media", db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local", worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1, cli_retries=1, kernel_timeout=60, accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False, keep_job_inputs=False,
+        keep_source_inputs_for_retry=True, share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    image = tmp / "image.png"
+    image.write_bytes(base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
+    ))
+    result = tmp / "result.json"
+    result.write_text(json.dumps({
+        "status": "done", "worker_version": "1.3", "files": ["image.png"],
+    }), encoding="utf-8")
+    try:
+        controller._validate_downloaded_outputs(
+            {"task": "image", "meta": {}}, [(result, "file"), (image, "image")]
+        )
+        raise AssertionError("v1.3 result without SHA-256 manifest accepted")
+    except RuntimeError as exc:
+        assert "Manifest SHA-256 absent" in str(exc)
+    controller.executor.shutdown(wait=False)
+
+print("Required SHA-256 manifest contract passed.")
