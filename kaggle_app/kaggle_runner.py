@@ -1180,13 +1180,17 @@ class KaggleController:
         )
         state_token = match.group(1).lower() if match else ""
         if not state_token:
-            tokens = re.findall(
-                r"(?i)\b(queued|pending|running|active|executing|complete|completed|error|failed|cancelled|canceled)\b",
-                normalized,
-            )
-            unique = {token.lower() for token in tokens}
-            if len(unique) == 1:
-                state_token = next(iter(unique))
+            standalone_states = {
+                line.strip().lower()
+                for line in (output or "").splitlines()
+                if line.strip().lower() in {
+                    "queued", "pending", "running", "active", "executing",
+                    "complete", "completed", "error", "failed",
+                    "cancelled", "canceled",
+                }
+            }
+            if len(standalone_states) == 1:
+                state_token = next(iter(standalone_states))
 
         if state_token in TERMINAL_BAD:
             return "error", output
