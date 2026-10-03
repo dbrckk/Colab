@@ -1379,3 +1379,23 @@ with tempfile.TemporaryDirectory() as td:
     assert len(db.artifacts("legacy")) == 1
 
 print("Legacy artifact duplicate migration passed.")
+
+
+from kaggle_app.storage import import_outputs as _import_outputs
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    src = tmp / "download"
+    src.mkdir()
+    (src / "image.png").write_bytes(base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
+    ))
+    storage = tmp / "media"
+    first = _import_outputs("atomic", src, storage)
+    second = _import_outputs("atomic", src, storage)
+    assert first[0][0] == second[0][0]
+    assert len([p for p in (storage / "atomic").iterdir() if p.is_file()]) == 1
+    assert not list((storage / "atomic").glob("*.part"))
+    assert not list((storage / "atomic").glob(".*.part"))
+
+print("Atomic output import validation passed.")
