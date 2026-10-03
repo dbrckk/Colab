@@ -2938,3 +2938,53 @@ with tempfile.TemporaryDirectory() as td:
     controller.executor.shutdown(wait=False)
 
 print("Required SHA-256 manifest contract passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root, storage_root=tmp / "media", db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local", worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1, cli_retries=1, kernel_timeout=60, accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False, keep_job_inputs=False,
+        keep_source_inputs_for_retry=True, share_gradio=False,
+    )
+    seed_db = JobDB(settings.db_path)
+    seed_db.create_job("auto-recover", "image", "x", {
+        "recover_outputs_available": True, "auto_recovery_attempts": 1,
+    })
+    seed_db.update_job("auto-recover", status="error", kernel_ref="ci-user/complete")
+    seed_db.create_job("auto-recover-capped", "image", "x", {
+        "recover_outputs_available": True, "auto_recovery_attempts": 3,
+    })
+    seed_db.update_job("auto-recover-capped", status="error", kernel_ref="ci-user/complete-2")
+    old_user = os.environ.get("KAGGLE_USERNAME")
+    old_token = os.environ.get("KAGGLE_API_TOKEN")
+    original_recover = KaggleController._recover_remote_job
+    recovered_ids = []
+    KaggleController._recover_remote_job = lambda self, job_id: recovered_ids.append(job_id)
+    try:
+        os.environ["KAGGLE_USERNAME"] = "ci-user"
+        os.environ["KAGGLE_API_TOKEN"] = "ci-token"
+        controller = KaggleController(settings)
+        controller.executor.shutdown(wait=True)
+        first = controller.db.get_job("auto-recover")
+        capped = controller.db.get_job("auto-recover-capped")
+        assert recovered_ids == ["auto-recover"]
+        assert first["status"] == "recovering"
+        assert first["meta"]["auto_recovery_attempts"] == 2
+        assert first["meta"]["last_auto_recovery_at"] > 0
+        assert capped["status"] == "error"
+        assert capped["meta"]["auto_recovery_attempts"] == 3
+    finally:
+        KaggleController._recover_remote_job = original_recover
+        if old_user is None:
+            os.environ.pop("KAGGLE_USERNAME", None)
+        else:
+            os.environ["KAGGLE_USERNAME"] = old_user
+        if old_token is None:
+            os.environ.pop("KAGGLE_API_TOKEN", None)
+        else:
+            os.environ["KAGGLE_API_TOKEN"] = old_token
+
+print("Automatic preserved-output recovery cap passed.")
