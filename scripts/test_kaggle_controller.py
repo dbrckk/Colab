@@ -2988,3 +2988,37 @@ with tempfile.TemporaryDirectory() as td:
             os.environ["KAGGLE_API_TOKEN"] = old_token
 
 print("Automatic preserved-output recovery cap passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root, storage_root=tmp / "media", db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local", worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1, cli_retries=1, kernel_timeout=60, accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False, keep_job_inputs=False,
+        keep_source_inputs_for_retry=True, share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    controller.db.create_job("missing-remote", "image", "x", {
+        "recover_outputs_available": True, "auto_recovery_attempts": 1,
+    })
+    controller.db.update_job(
+        "missing-remote", status="error", kernel_ref="ci-user/gone",
+    )
+    original_status = controller._kernel_status
+    controller._kernel_status = lambda ref: (_ for _ in ()).throw(
+        RuntimeError("404 Not Found: kernel does not exist")
+    )
+    controller._recover_remote_job("missing-remote")
+    lost = controller.db.get_job("missing-remote")
+    assert lost["status"] == "error"
+    assert lost["meta"]["recover_outputs_available"] is False
+    assert lost["meta"]["failed_phase"] == "remote_missing"
+    assert "Relancer" in lost["error"]
+    assert controller._remote_kernel_missing(RuntimeError("404 Not Found"))
+    assert not controller._remote_kernel_missing(RuntimeError("429 Too Many Requests"))
+    controller._kernel_status = original_status
+    controller.executor.shutdown(wait=False)
+
+print("Missing remote recovery source classification passed.")
