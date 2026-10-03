@@ -3271,3 +3271,48 @@ with tempfile.TemporaryDirectory() as td:
     controller.executor.shutdown(wait=False)
 
 print("Forced Kaggle remote cleanup override passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root, storage_root=tmp / "media", db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local", worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1, cli_retries=1, kernel_timeout=60, accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False, delete_remote_dataset=True,
+        keep_job_inputs=False, keep_source_inputs_for_retry=True, share_gradio=False,
+    )
+    settings.env_file.write_text(
+        "KAGGLE_USERNAME=working-user\n"
+        "KAGGLE_API_TOKEN=working-token\n"
+        "QWEN_KAGGLE_SHARE=false\n",
+        encoding="utf-8",
+    )
+    old_values = {key: os.environ.get(key) for key in (
+        "KAGGLE_USERNAME", "KAGGLE_API_TOKEN", "KAGGLE_KEY"
+    )}
+    os.environ["KAGGLE_USERNAME"] = "working-user"
+    os.environ["KAGGLE_API_TOKEN"] = "working-token"
+    os.environ.pop("KAGGLE_KEY", None)
+    controller = KaggleController(settings)
+    controller._run = lambda *args, **kwargs: (_ for _ in ()).throw(
+        RuntimeError("401 Unauthorized")
+    )
+    before_file = settings.env_file.read_text(encoding="utf-8")
+    try:
+        controller.save_credentials("bad-user", "bad-token", "", persist=True)
+        raise AssertionError("invalid credentials unexpectedly persisted")
+    except RuntimeError as exc:
+        assert "401" in str(exc)
+    assert os.environ.get("KAGGLE_USERNAME") == "working-user"
+    assert os.environ.get("KAGGLE_API_TOKEN") == "working-token"
+    assert "KAGGLE_KEY" not in os.environ
+    assert settings.env_file.read_text(encoding="utf-8") == before_file
+    controller.executor.shutdown(wait=False)
+    for key, value in old_values.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+
+print("Invalid Kaggle credential rollback passed.")
