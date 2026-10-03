@@ -287,8 +287,15 @@ for token in [
     "--llm_vision",
 ]:
     assert token in worker_source, f"Missing worker capability: {token}"
-import re as _re
-_version_match = _re.search(r'^WORKER_VERSION = "([0-9]+(?:\\.[0-9]+)*)"
+version_line = next(
+    (line for line in worker_source.splitlines() if line.startswith("WORKER_VERSION = ")),
+    "",
+)
+assert version_line, "Missing WORKER_VERSION"
+version_text = version_line.split("=", 1)[1].strip().strip('"')
+version_tuple = tuple(int(x) for x in version_text.split("."))
+assert version_tuple >= (1, 3), f"Worker version too old: {version_text}"
+print("Kaggle worker syntax validation passed.")
 
 
 with tempfile.TemporaryDirectory() as td:
