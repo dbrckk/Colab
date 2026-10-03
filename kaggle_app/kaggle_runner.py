@@ -18,33 +18,14 @@ from typing import Any
 
 from .config import SETTINGS, Settings
 from .db import JobDB
+from .kaggle_protocol import (
+    is_auth_cli_error,
+    is_transient_cli_error,
+    parse_dataset_status,
+    parse_kernel_status,
+    remote_kernel_missing,
+)
 from .storage import import_outputs, scan_outputs
-
-TERMINAL_OK = ("complete", "completed")
-TERMINAL_BAD = ("error", "failed", "cancelled", "canceled")
-
-def _is_auth_cli_error(text: str) -> bool:
-    low = (text or "").lower()
-    return any(token in low for token in (
-        "401", "403", "unauthorized", "forbidden",
-        "authentication required", "invalid token", "api token",
-    ))
-
-def _is_transient_cli_error(text: str) -> bool:
-    low = (text or "").lower()
-    transient = (
-        "timed out", "timeout", "temporarily unavailable", "connection reset",
-        "connection aborted", "connection refused", "remote disconnected",
-        "server error", "bad gateway", "gateway timeout", "service unavailable",
-        "too many requests", "rate limit", "429", "500", "502", "503", "504",
-    )
-    permanent = (
-        "401", "403", "unauthorized", "forbidden", "invalid token",
-        "authentication", "usage:", "unrecognized arguments", "invalid choice",
-    )
-    if any(token in low for token in permanent):
-        return False
-    return any(token in low for token in transient)
 
 class JobCancelled(RuntimeError):
     pass
@@ -305,11 +286,7 @@ class KaggleController:
 
     @staticmethod
     def _remote_kernel_missing(exc: Exception) -> bool:
-        text = str(exc).lower()
-        return any(token in text for token in (
-            "404", "not found", "does not exist", "could not find",
-            "kernel not found", "no such kernel",
-        ))
+        return remote_kernel_missing(str(exc))
 
     def _recover_remote_job(self, job_id: str) -> None:
         job = self.db.get_job(job_id)
@@ -394,7 +371,7 @@ class KaggleController:
                 current_meta = current.get("meta") or {}
                 missing_remote = self._remote_kernel_missing(exc)
                 remote_failed = isinstance(exc, RemoteKernelFailed)
-                auth_required = _is_auth_cli_error(str(exc))
+                auth_required = is_auth_cli_error(str(exc))
                 if auth_required:
                     self.db.update_job(
                         job_id,
@@ -630,7 +607,7 @@ class KaggleController:
                 last_output = output
                 if p.returncode == 0:
                     return output
-                if attempt >= attempts or not _is_transient_cli_error(output):
+                if attempt >= attempts or not is_transient_cli_error(output):
                     raise RuntimeError(output[-7000:] or f"Kaggle CLI exit={p.returncode}")
             except subprocess.TimeoutExpired as exc:
                 last_output = f"Kaggle CLI timeout: {exc}"
@@ -1091,45 +1068,7 @@ class KaggleController:
 
     def _dataset_status(self, dataset_ref: str) -> tuple[str, str]:
         output = self._run(["datasets", "status", dataset_ref], timeout=120)
-        match = re.search(
-            r"(?im)^\s*(?:dataset\s+)?status\s*[:=]\s*"
-            r"(ready|complete|completed|creating|pending|queued|error|failed)\s*$",
-            output or "",
-        )
-        token = match.group(1).lower() if match else ""
-        if not token:
-            standalone = {
-                line.strip().lower()
-                for line in (output or "").splitlines()
-                if line.strip().lower() in {
-                    "ready", "complete", "completed", "creating",
-                    "pending", "queued", "error", "failed",
-                }
-            }
-            if len(standalone) == 1:
-                token = next(iter(standalone))
-
-        groups = {
-            "ready": "ready", "complete": "ready", "completed": "ready",
-            "creating": "pending", "pending": "pending", "queued": "pending",
-            "error": "error", "failed": "error",
-        }
-        mentioned = {
-            groups[t.lower()]
-            for t in re.findall(
-                r"(?i)\b(ready|complete|completed|creating|pending|queued|error|failed)\b",
-                output or "",
-            )
-        }
-        if len(mentioned) > 1:
-            return "unknown", output
-        if token in {"ready", "complete", "completed"}:
-            return "ready", output
-        if token in {"creating", "pending", "queued"}:
-            return "pending", output
-        if token in {"error", "failed"}:
-            return "error", output
-        return "unknown", output
+        return parse_dataset_status(output), output
 
     def _prepare_dataset(self, job: dict[str, Any], folder: Path, dataset_ref: str | None = None) -> str:
         dataset_ref = dataset_ref or self._dataset_ref(job)
@@ -1297,63 +1236,7 @@ class KaggleController:
 
     def _kernel_status(self, kernel_ref: str) -> tuple[str, str]:
         output = self._run(["kernels", "status", kernel_ref], timeout=120)
-        normalized = (output or "").strip().lower()
-
-        # Prefer an explicit status value when the CLI prints "status: X" or
-        # "status = X". Fall back to a standalone state token only. Avoid
-        # substring matching so messages such as "no error detected" or
-        # "last completed version" cannot be misclassified as the live state.
-        match = re.search(
-            r"(?im)^\s*(?:kernel\s+)?status\s*[:=]\s*"
-            r"(queued|pending|running|active|executing|complete|completed|error|failed|cancelled|canceled)\s*$",
-            output or "",
-        )
-        state_token = match.group(1).lower() if match else ""
-        if not state_token:
-            standalone_states = {
-                line.strip().lower()
-                for line in (output or "").splitlines()
-                if line.strip().lower() in {
-                    "queued", "pending", "running", "active", "executing",
-                    "complete", "completed", "error", "failed",
-                    "cancelled", "canceled",
-                }
-            }
-            if len(standalone_states) == 1:
-                state_token = next(iter(standalone_states))
-
-        state_group = {
-            "queued": "queued", "pending": "queued",
-            "running": "running", "active": "running", "executing": "running",
-            "complete": "complete", "completed": "complete",
-            "error": "error", "failed": "error",
-            "cancelled": "error", "canceled": "error",
-        }
-        mentioned = {
-            state_group[token.lower()]
-            for token in re.findall(
-                r"(?i)\b(queued|pending|running|active|executing|complete|completed|error|failed|cancelled|canceled)\b",
-                output or "",
-            )
-        }
-        if len(mentioned) > 1:
-            raise RuntimeError(
-                "Statut Kaggle ambigu; plusieurs états incompatibles ont été détectés. "
-                "Le kernel distant est conservé pour reprise: " + output[-1500:]
-            )
-
-        if state_token in TERMINAL_BAD:
-            return "error", output
-        if state_token in TERMINAL_OK:
-            return "complete", output
-        if state_token in {"queued", "pending"}:
-            return "queued", output
-        if state_token in {"running", "active", "executing"}:
-            return "running", output
-        raise RuntimeError(
-            "Statut Kaggle non reconnu; le kernel distant est conservé pour reprise: "
-            + output[-1500:]
-        )
+        return parse_kernel_status(output), output
 
     def _execute(self, job_id: str) -> None:
         job = self.db.get_job(job_id)
@@ -1471,7 +1354,7 @@ class KaggleController:
                 current = self.db.get_job(job_id) or job
                 failed_phase = current.get("status") or ""
                 current_meta = current.get("meta") or {}
-                auth_required = _is_auth_cli_error(str(exc))
+                auth_required = is_auth_cli_error(str(exc))
                 preserve_kernel = bool(
                     kernel_ref
                     and failed_phase in {"submitting", "queued", "running", "downloading", "recovering"}
