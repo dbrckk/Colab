@@ -1251,3 +1251,29 @@ with tempfile.TemporaryDirectory() as td:
     controller.executor.shutdown(wait=False)
 
 print("Incomplete batch validation passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root, storage_root=tmp / "media", db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local", worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1, cli_retries=1, kernel_timeout=60, accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False, keep_job_inputs=False,
+        keep_source_inputs_for_retry=True, share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    controller.db.create_job("recover-only", "image", "x", {})
+    controller.db.update_job(
+        "recover-only", status="error", kernel_ref="ci-user/kernel",
+        meta_json={"recover_outputs_available": True, "failed_phase": "downloading"},
+    )
+    called = []
+    controller._recover_remote_job = lambda job_id: called.append(job_id)
+    msg = controller.recover_outputs("recover-only")
+    assert "sans recalcul GPU" in msg
+    controller.executor.shutdown(wait=True)
+    assert called == ["recover-only"]
+    assert controller.db.get_job("recover-only")["status"] == "recovering"
+
+print("Output-only recovery scheduling passed.")
