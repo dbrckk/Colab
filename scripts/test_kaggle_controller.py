@@ -3585,3 +3585,34 @@ with tempfile.TemporaryDirectory() as td:
                 os.environ[key] = value
 
 print("Authentication resumes existing remote kernel without recompute.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root, storage_root=tmp / "media", db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local", worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1, cli_retries=1, kernel_timeout=60, accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False, delete_remote_dataset=True,
+        keep_job_inputs=False, keep_source_inputs_for_retry=True, share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    active_cases = [
+        ("retry-preparing", "preparing", ""),
+        ("retry-uploading", "uploading_inputs", ""),
+        ("retry-waiting-local", "waiting_auth", ""),
+        ("retry-waiting-remote", "waiting_auth", "ci-user/existing"),
+        ("retry-cancel-requested", "cancel_requested", "ci-user/existing"),
+    ]
+    for job_id, status, kernel_ref in active_cases:
+        controller.db.create_job(job_id, "image", "x", {})
+        controller.db.update_job(job_id, status=status, kernel_ref=kernel_ref)
+        try:
+            controller.retry(job_id)
+            raise AssertionError(f"active job retry unexpectedly accepted: {status}")
+        except RuntimeError as exc:
+            text = str(exc).lower()
+            assert "actif" in text or "authentification" in text
+    controller.executor.shutdown(wait=False)
+
+print("Active Kaggle job duplicate retry guard passed.")
