@@ -3153,3 +3153,50 @@ with tempfile.TemporaryDirectory() as td:
             os.environ["KAGGLE_KEY"] = old_key
 
 print("Credential persistence preserves settings passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root, storage_root=tmp / "media", db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local", worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1, cli_retries=1, kernel_timeout=60, accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False, recovery_retention_days=7,
+        keep_job_inputs=False, keep_source_inputs_for_retry=True, share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    original_run = controller._run
+    original_resume_wait = controller.resume_waiting_jobs
+    original_resume_outputs = controller.resume_recoverable_outputs
+    controller._run = lambda *args, **kwargs: "ok"
+    controller.resume_waiting_jobs = lambda: 0
+    controller.resume_recoverable_outputs = lambda: 0
+    old_user = os.environ.get("KAGGLE_USERNAME")
+    old_token = os.environ.get("KAGGLE_API_TOKEN")
+    old_key = os.environ.get("KAGGLE_KEY")
+    try:
+        controller.save_credentials("atomic-user", "atomic-token", "", persist=True)
+        assert settings.env_file.exists()
+        saved = settings.env_file.read_text(encoding="utf-8")
+        assert "KAGGLE_USERNAME=atomic-user" in saved
+        assert "KAGGLE_API_TOKEN=atomic-token" in saved
+        assert not list(settings.env_file.parent.glob(f".{settings.env_file.name}.*.part"))
+    finally:
+        controller._run = original_run
+        controller.resume_waiting_jobs = original_resume_wait
+        controller.resume_recoverable_outputs = original_resume_outputs
+        controller.executor.shutdown(wait=False)
+        if old_user is None:
+            os.environ.pop("KAGGLE_USERNAME", None)
+        else:
+            os.environ["KAGGLE_USERNAME"] = old_user
+        if old_token is None:
+            os.environ.pop("KAGGLE_API_TOKEN", None)
+        else:
+            os.environ["KAGGLE_API_TOKEN"] = old_token
+        if old_key is None:
+            os.environ.pop("KAGGLE_KEY", None)
+        else:
+            os.environ["KAGGLE_KEY"] = old_key
+
+print("Atomic credential persistence passed.")
