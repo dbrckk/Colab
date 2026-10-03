@@ -205,16 +205,21 @@ with tempfile.TemporaryDirectory() as td:
     first.executor.shutdown(wait=False)
 
     original_recover = KaggleController._recover_remote_job
+    original_execute = KaggleController._execute
     try:
         KaggleController._recover_remote_job = (
             lambda self, job_id: self.db.update_job(job_id, status="recovered-test")
         )
+        KaggleController._execute = (
+            lambda self, job_id: self.db.update_job(job_id, status="resumed-local-test")
+        )
         second = KaggleController(settings)
         second.executor.shutdown(wait=True)
-        assert second.db.get_job("stale-prep")["status"] == "interrupted"
+        assert second.db.get_job("stale-prep")["status"] == "resumed-local-test"
         assert second.db.get_job("remote-running")["status"] == "recovered-test"
     finally:
         KaggleController._recover_remote_job = original_recover
+        KaggleController._execute = original_execute
 
 print("Controller restart recovery validation passed.")
 
