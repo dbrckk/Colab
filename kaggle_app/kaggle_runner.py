@@ -447,6 +447,10 @@ class KaggleController:
     def resume_waiting_jobs(self) -> int:
         if not self.credentials_ready():
             return 0
+        try:
+            self.validate_current_credentials()
+        except Exception:
+            return 0
         resumed = 0
         for row in self.db.list_jobs(500):
             if row.get("status") != "waiting_auth":
@@ -465,7 +469,16 @@ class KaggleController:
                         self._recover_remote_job, job_id
                     )
                 else:
-                    self.db.update_job(job_id, status="queued", error="")
+                    meta = row.get("meta") or {}
+                    dataset_ref = meta.get("dataset_ref") or ""
+                    if dataset_ref:
+                        self._cleanup_remote_refs("", dataset_ref)
+                    self.db.update_job(
+                        job_id,
+                        status="queued",
+                        error="",
+                        meta_json={**meta, "dataset_ref": ""},
+                    )
                     self._futures[job_id] = self.executor.submit(self._execute, job_id)
                 resumed += 1
         return resumed
@@ -1440,22 +1453,40 @@ class KaggleController:
                 current = self.db.get_job(job_id) or job
                 failed_phase = current.get("status") or ""
                 current_meta = current.get("meta") or {}
+                auth_required = _is_auth_cli_error(str(exc))
                 preserve_kernel = bool(
                     kernel_ref
                     and failed_phase in {"submitting", "queued", "running", "downloading", "recovering"}
                     and not isinstance(exc, RemoteKernelFailed)
                 )
-                self.db.update_job(
-                    job_id,
-                    status="error",
-                    error=f"{type(exc).__name__}: {exc}",
-                    meta_json={
-                        **current_meta,
-                        "recover_outputs_available": preserve_kernel,
-                        "failed_phase": failed_phase,
-                        "remote_failure_confirmed": isinstance(exc, RemoteKernelFailed),
-                    },
-                )
+                if auth_required:
+                    self.db.update_job(
+                        job_id,
+                        status="waiting_auth",
+                        error=(
+                            "Authentification Kaggle requise pour reprendre le kernel distant existant."
+                            if kernel_ref
+                            else "Authentification Kaggle requise pour reprendre la préparation du job."
+                        ),
+                        meta_json={
+                            **current_meta,
+                            "recover_outputs_available": bool(kernel_ref),
+                            "failed_phase": "auth_required",
+                            "remote_failure_confirmed": False,
+                        },
+                    )
+                else:
+                    self.db.update_job(
+                        job_id,
+                        status="error",
+                        error=f"{type(exc).__name__}: {exc}",
+                        meta_json={
+                            **current_meta,
+                            "recover_outputs_available": preserve_kernel,
+                            "failed_phase": failed_phase,
+                            "remote_failure_confirmed": isinstance(exc, RemoteKernelFailed),
+                        },
+                    )
         finally:
             current = self.db.get_job(job_id) or {}
             meta = current.get("meta") or {}
