@@ -899,14 +899,14 @@ class KaggleController:
         dataset_ref: str = "",
         force: bool = False,
     ) -> None:
-        if not force and not self.settings.delete_remote_kernel:
-            return
-        if kernel_ref:
+        delete_kernel = force or self.settings.delete_remote_kernel
+        delete_dataset = force or self.settings.delete_remote_dataset
+        if kernel_ref and delete_kernel:
             try:
                 self._run(["kernels", "delete", kernel_ref, "-y"], timeout=180)
             except Exception:
                 pass
-        if dataset_ref:
+        if dataset_ref and delete_dataset:
             try:
                 self._run(["datasets", "delete", dataset_ref, "-y"], timeout=180)
             except Exception:
