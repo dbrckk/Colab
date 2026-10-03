@@ -573,11 +573,25 @@ class KaggleController:
                 lines.append(f"KAGGLE_API_TOKEN={api_token}")
             else:
                 lines.append(f"KAGGLE_KEY={legacy_key}")
-            env_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+            env_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = "\n".join(lines).rstrip() + "\n"
+            tmp_env = env_path.with_name(f".{env_path.name}.{uuid.uuid4().hex[:8]}.part")
             try:
-                os.chmod(env_path, 0o600)
-            except Exception:
-                pass
+                tmp_env.write_text(payload, encoding="utf-8")
+                try:
+                    os.chmod(tmp_env, 0o600)
+                except Exception:
+                    pass
+                os.replace(tmp_env, env_path)
+                try:
+                    os.chmod(env_path, 0o600)
+                except Exception:
+                    pass
+            finally:
+                try:
+                    tmp_env.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
         self._run(["kernels", "list", "-m", "-p", "1"], timeout=120)
         resumed = self.resume_waiting_jobs()
