@@ -1334,3 +1334,18 @@ with tempfile.TemporaryDirectory() as td:
     controller.executor.shutdown(wait=False)
 
 print("Recovery availability guard passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    db_path = tmp / "jobs.sqlite3"
+    db = JobDB(db_path)
+    db.create_job("artifact-idempotent", "image", "x", {})
+    artifact_path = str(tmp / "same.png")
+    db.add_artifact("artifact-idempotent", artifact_path, "image")
+    db.add_artifact("artifact-idempotent", artifact_path, "image")
+    rows = db.artifacts("artifact-idempotent")
+    assert len(rows) == 1
+    assert rows[0]["path"] == artifact_path
+
+print("Artifact DB idempotency validation passed.")
