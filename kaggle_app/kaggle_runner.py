@@ -24,6 +24,7 @@ from .kaggle_auth import (
     credential_fingerprint,
     credential_save_message,
     credentials_ready as auth_credentials_ready,
+    resolve_candidate_credentials,
     restore_credential_env,
     snapshot_credential_env,
     validate_credential_fields,
@@ -520,16 +521,17 @@ class KaggleController:
         legacy_key: str = "",
         persist: bool = True,
     ) -> str:
-        username = (username or "").strip()
-        api_token = (api_token or "").strip()
-        legacy_key = (legacy_key or "").strip()
         # Password fields intentionally stay blank in the UI. If Colab Secrets
         # or the current process already provided valid credentials, allow the
         # user to test/persist them without copying the secret back into the UI.
-        current_username = self.settings.kaggle_username
-        if not api_token and not legacy_key and username == current_username:
-            api_token = self.settings.kaggle_api_token
-            legacy_key = "" if api_token else self.settings.kaggle_key
+        username, api_token, legacy_key = resolve_candidate_credentials(
+            username=username,
+            api_token=api_token,
+            legacy_key=legacy_key,
+            current_username=self.settings.kaggle_username,
+            current_api_token=self.settings.kaggle_api_token,
+            current_legacy_key=self.settings.kaggle_key,
+        )
 
         validate_credential_fields(username, api_token, legacy_key)
 
