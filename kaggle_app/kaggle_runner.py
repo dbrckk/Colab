@@ -67,6 +67,7 @@ from .kaggle_reconcile import classify_missing_local_outputs, has_valid_local_me
 from .kaggle_recovery import (
     auto_recovery_attempts,
     classify_remote_recovery_failure,
+    expired_recovery_candidates,
     has_recoverable_outputs,
     keep_remote_kernel_for_retry,
     preserve_kernel_after_execute_failure,
@@ -1152,14 +1153,13 @@ class KaggleController:
     def cleanup_expired_recovery_kernels(self) -> int:
         if not self.credentials_ready():
             return 0
-        cutoff = time.time() - max(1, int(self.settings.recovery_retention_days)) * 86400
         removed = 0
-        for row in self.db.list_jobs(100000):
+        for row in expired_recovery_candidates(
+            self.db.list_jobs(100000),
+            now=time.time(),
+            retention_days=self.settings.recovery_retention_days,
+        ):
             meta = row.get("meta") or {}
-            if not recovery_marked(row):
-                continue
-            if float(row.get("updated_at") or 0) >= cutoff:
-                continue
             kernel_ref = row.get("kernel_ref") or ""
             dataset_ref = meta.get("dataset_ref") or ""
             if kernel_ref or dataset_ref:
