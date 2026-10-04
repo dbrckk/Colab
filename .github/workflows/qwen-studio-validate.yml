@@ -14,6 +14,7 @@ on:
       - "scripts/test_video_checkpoint.py"
       - "scripts/test_gradio_ui_smoke.py"
       - "scripts/test_kaggle_controller.py"
+      - "scripts/test_kaggle_artifacts.py"
       - "scripts/test_kaggle_auth.py"
       - "scripts/test_kaggle_cleanup.py"
       - "scripts/test_kaggle_dashboard.py"
@@ -45,6 +46,7 @@ on:
       - "scripts/test_video_checkpoint.py"
       - "scripts/test_gradio_ui_smoke.py"
       - "scripts/test_kaggle_controller.py"
+      - "scripts/test_kaggle_artifacts.py"
       - "scripts/test_kaggle_auth.py"
       - "scripts/test_kaggle_cleanup.py"
       - "scripts/test_kaggle_dashboard.py"
@@ -91,6 +93,8 @@ jobs:
         run: python scripts/test_gradio_ui_smoke.py
       - name: Kaggle controller unit test
         run: python scripts/test_kaggle_controller.py
+      - name: Kaggle artifact reconciliation unit test
+        run: python scripts/test_kaggle_artifacts.py
       - name: Kaggle auth policy unit test
         run: python scripts/test_kaggle_auth.py
       - name: Kaggle cleanup helper unit test
