@@ -22,15 +22,15 @@ def startup_recovery_action(
     kernel_ref = str(row.get("kernel_ref") or "")
     meta = row.get("meta") or {}
 
-    if status in LOCAL_REPLAY_STATES:
-        return "resume_local" if credentials_ready else "wait_local_auth"
-
     if (
-        status == "submitting"
-        and kernel_ref
+        kernel_ref
         and meta.get("remote_submission_confirmed") is False
+        and status not in {"done", "cancelled"}
     ):
         return "probe_submission" if credentials_ready else "wait_submission_auth"
+
+    if status in LOCAL_REPLAY_STATES:
+        return "resume_local" if credentials_ready else "wait_local_auth"
 
     if status in REMOTE_ACTIVE_STATES:
         if kernel_ref:
