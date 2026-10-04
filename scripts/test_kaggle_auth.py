@@ -8,6 +8,7 @@ from kaggle_app.kaggle_auth import (
     credential_fingerprint,
     credential_save_message,
     credentials_ready,
+    resolve_candidate_credentials,
     restore_credential_env,
     snapshot_credential_env,
     validate_credential_fields,
@@ -149,3 +150,36 @@ assert "legacy key" in legacy_message
 assert "sauvegardés" not in legacy_message
 
 print("Kaggle credential environment helper tests passed.")
+
+
+same_user = resolve_candidate_credentials(
+    username="existing-user",
+    api_token="",
+    legacy_key="",
+    current_username="existing-user",
+    current_api_token="current-token",
+    current_legacy_key="legacy",
+)
+assert same_user == ("existing-user", "current-token", "")
+
+same_user_legacy = resolve_candidate_credentials(
+    username="existing-user",
+    api_token="",
+    legacy_key="",
+    current_username="existing-user",
+    current_api_token="",
+    current_legacy_key="legacy",
+)
+assert same_user_legacy == ("existing-user", "", "legacy")
+
+other_user = resolve_candidate_credentials(
+    username="other-user",
+    api_token="",
+    legacy_key="",
+    current_username="existing-user",
+    current_api_token="current-token",
+    current_legacy_key="legacy",
+)
+assert other_user == ("other-user", "", "")
+
+print("Kaggle candidate credential resolution tests passed.")
