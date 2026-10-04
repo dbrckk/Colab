@@ -35,6 +35,9 @@ validate_credential_fields("valid-user_1", "token", "")
 validate_credential_fields("valid.user", "", "legacy-key")
 
 invalid_cases = [
+    ("user\\nEVIL=1", "token", ""),
+    ("user", "token\\nEVIL=1", ""),
+    ("user", "", "legacy\\rBAD=1"),
     ("", "token", ""),
     ("user", "", ""),
     ("bad user", "token", ""),
