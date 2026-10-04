@@ -1713,6 +1713,8 @@ with tempfile.TemporaryDirectory() as td:
         "missing-remote", status="error", kernel_ref="ci-user/gone",
     )
     original_status = controller._kernel_status
+    original_validate = controller.validate_current_credentials
+    controller.validate_current_credentials = lambda max_age_seconds=300: None
     controller._kernel_status = lambda ref: (_ for _ in ()).throw(
         RuntimeError("404 Not Found: kernel does not exist")
     )
@@ -1725,6 +1727,7 @@ with tempfile.TemporaryDirectory() as td:
     assert controller._remote_kernel_missing(RuntimeError("404 Not Found"))
     assert not controller._remote_kernel_missing(RuntimeError("429 Too Many Requests"))
     controller._kernel_status = original_status
+    controller.validate_current_credentials = original_validate
     controller.executor.shutdown(wait=False)
 
 print("Missing remote recovery source classification passed.")
