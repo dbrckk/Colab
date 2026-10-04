@@ -155,3 +155,23 @@ def credential_save_message(
         + (" et sauvegardés dans le stockage privé configuré." if persist else ".")
         + suffix
     )
+
+
+def resolve_candidate_credentials(
+    *,
+    username: str,
+    api_token: str,
+    legacy_key: str,
+    current_username: str,
+    current_api_token: str,
+    current_legacy_key: str,
+) -> tuple[str, str, str]:
+    username = (username or "").strip()
+    api_token = (api_token or "").strip()
+    legacy_key = (legacy_key or "").strip()
+
+    if not api_token and not legacy_key and username == (current_username or "").strip():
+        api_token = (current_api_token or "").strip()
+        legacy_key = "" if api_token else (current_legacy_key or "").strip()
+
+    return username, api_token, legacy_key
