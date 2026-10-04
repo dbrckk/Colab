@@ -33,6 +33,7 @@ from .kaggle_protocol import (
     parse_kernel_status,
     remote_kernel_missing,
 )
+from .kaggle_cleanup import cleanup_report, expired_exports, orphan_input_dirs
 from .kaggle_dashboard import dashboard_summary_text
 from .kaggle_dataset import write_dataset_bundle
 from .kaggle_health import recovery_diagnostic_lines
@@ -1268,31 +1269,29 @@ class KaggleController:
         reclaimed = 0
 
         export_root = self.settings.storage_root / "_exports"
-        if export_root.exists():
-            cutoff = now - max(1, int(export_max_age_days)) * 86400
-            for p in export_root.glob("*.zip"):
-                try:
-                    if p.stat().st_mtime < cutoff:
-                        reclaimed += p.stat().st_size
-                        p.unlink()
-                        removed_exports += 1
-                except OSError:
-                    pass
+        for path in expired_exports(
+            export_root,
+            now=now,
+            max_age_days=export_max_age_days,
+        ):
+            try:
+                reclaimed += path.stat().st_size
+                path.unlink()
+                removed_exports += 1
+            except OSError:
+                pass
 
-        known_ids = {str(j.get("id")) for j in self.db.list_jobs(100000)}
+        known_ids = {str(job.get("id")) for job in self.db.list_jobs(100000)}
         input_root = self.settings.storage_root / "_inputs"
-        if input_root.exists():
-            for d in input_root.iterdir():
-                if not d.is_dir() or d.name in known_ids:
-                    continue
-                try:
-                    for p in d.rglob("*"):
-                        if p.is_file():
-                            reclaimed += p.stat().st_size
-                except OSError:
-                    pass
-                shutil.rmtree(d, ignore_errors=True)
-                removed_inputs += 1
+        for directory in orphan_input_dirs(input_root, known_ids=known_ids):
+            try:
+                for path in directory.rglob("*"):
+                    if path.is_file():
+                        reclaimed += path.stat().st_size
+            except OSError:
+                pass
+            shutil.rmtree(directory, ignore_errors=True)
+            removed_inputs += 1
 
         gc_files, gc_bytes = self._gc_input_store()
         reclaimed += gc_bytes
@@ -1305,20 +1304,15 @@ class KaggleController:
         except Exception:
             pass
 
-        amount = (
-            f"{reclaimed / 1024**3:.2f} Go"
-            if reclaimed >= 1024**3
-            else f"{reclaimed / 1024**2:.1f} Mo"
-        )
         self._storage_cache["ts"] = 0.0
-        return (
-            f"Nettoyage terminé • {removed_exports} export(s) ancien(s) • "
-            f"{removed_inputs} dossier(s) d'entrée orphelin(s) • "
-            f"{gc_files} source(s) partagée(s) non référencée(s) • "
-            f"{stale_artifacts} artefact(s) DB obsolète(s) • "
-            f"{recoverable_jobs} job(s) récupérable(s) détecté(s) • "
-            f"{expired_recovery_kernels} récupération(s) distante(s) expirée(s) • "
-            f"{amount} libéré(s)."
+        return cleanup_report(
+            removed_exports=removed_exports,
+            removed_inputs=removed_inputs,
+            gc_files=gc_files,
+            stale_artifacts=stale_artifacts,
+            recoverable_jobs=recoverable_jobs,
+            expired_recovery_kernels=expired_recovery_kernels,
+            reclaimed=reclaimed,
         )
 
     def dashboard_summary(self) -> str:
