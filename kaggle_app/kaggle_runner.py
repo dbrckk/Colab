@@ -58,6 +58,11 @@ from .kaggle_recovery import (
 )
 from .storage import import_outputs, scan_outputs
 
+# Backward-compatible aliases kept for existing tests/importers while the
+# implementation lives in kaggle_protocol.py.
+_is_auth_cli_error = is_auth_cli_error
+_is_transient_cli_error = is_transient_cli_error
+
 class JobCancelled(RuntimeError):
     pass
 
