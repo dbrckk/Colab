@@ -50,6 +50,7 @@ from .kaggle_input_store import (
 from .kaggle_inputs import validate_submission
 from .kaggle_job_policy import (
     can_cancel_locally,
+    delete_block_reason,
     retry_block_reason,
     terminal_status_message,
 )
@@ -1409,8 +1410,9 @@ class KaggleController:
         job = self.db.get_job(job_id)
         if not job:
             return "Job introuvable."
-        if job.get("status") in {"queued", "running", "submitting", "recovering", "downloading", "cancel_requested"}:
-            raise RuntimeError("Annule d'abord le job actif.")
+        block_reason = delete_block_reason(job)
+        if block_reason:
+            raise RuntimeError(block_reason)
         kernel_ref = job.get("kernel_ref") or ""
         meta = job.get("meta") or {}
         dataset_ref = meta.get("dataset_ref") or ""
