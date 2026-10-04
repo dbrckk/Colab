@@ -59,3 +59,11 @@ for raw in (
         )
 
 print("Kaggle protocol helper tests passed.")
+
+
+assert is_auth_cli_error("403 Forbidden: invalid API token") is True
+assert is_auth_cli_error("403 Forbidden: authentication credentials expired") is True
+assert is_auth_cli_error("403 Forbidden: you do not have permission to access this resource") is False
+assert is_auth_cli_error("API token documentation is available here") is False
+
+print("Kaggle auth classification precision tests passed.")
