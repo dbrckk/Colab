@@ -25,6 +25,13 @@ def startup_recovery_action(
     if status in LOCAL_REPLAY_STATES:
         return "resume_local" if credentials_ready else "wait_local_auth"
 
+    if (
+        status == "submitting"
+        and kernel_ref
+        and meta.get("remote_submission_confirmed") is False
+    ):
+        return "probe_submission" if credentials_ready else "wait_submission_auth"
+
     if status in REMOTE_ACTIVE_STATES:
         if kernel_ref:
             return "resume_remote" if credentials_ready else "wait_remote_auth"
@@ -132,3 +139,10 @@ def expired_recovery_candidates(
         if recovery_marked(row)
         and float(row.get("updated_at") or 0) < cutoff
     ]
+
+
+def submission_confirmation_pending(row: dict[str, Any]) -> bool:
+    return bool(
+        row.get("kernel_ref")
+        and (row.get("meta") or {}).get("remote_submission_confirmed") is False
+    )
