@@ -2888,3 +2888,234 @@ with tempfile.TemporaryDirectory() as td:
         controller.executor.shutdown(wait=False)
 
 print("Unified output finalization idempotency passed.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root,
+        storage_root=tmp / "media",
+        db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local",
+        worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1,
+        cli_retries=1,
+        kernel_timeout=60,
+        accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False,
+        delete_remote_dataset=True,
+        keep_job_inputs=False,
+        keep_source_inputs_for_retry=True,
+        share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    controller.db.create_job(
+        "probe-existing-submission",
+        "image",
+        "x",
+        {
+            "dataset_ref": "ci-user/input",
+            "remote_submission_confirmed": False,
+        },
+    )
+    controller.db.update_job(
+        "probe-existing-submission",
+        status="submitting",
+        kernel_ref="ci-user/kernel",
+    )
+    original_validate = controller.validate_current_credentials
+    original_status = controller._kernel_status
+    original_recover = controller._recover_remote_job
+    controller.validate_current_credentials = lambda max_age_seconds=300: None
+    controller._kernel_status = lambda _ref: ("running", "status: running")
+    recovered = []
+    controller._recover_remote_job = lambda job_id: recovered.append(job_id)
+    try:
+        controller._resume_unconfirmed_submission("probe-existing-submission")
+        row = controller.db.get_job("probe-existing-submission")
+        assert row["status"] == "recovering"
+        assert row["meta"]["remote_submission_confirmed"] is True
+        assert recovered == ["probe-existing-submission"]
+    finally:
+        controller.validate_current_credentials = original_validate
+        controller._kernel_status = original_status
+        controller._recover_remote_job = original_recover
+        controller.executor.shutdown(wait=False)
+
+print("Unconfirmed submission attaches to existing remote kernel.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root,
+        storage_root=tmp / "media",
+        db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local",
+        worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1,
+        cli_retries=1,
+        kernel_timeout=60,
+        accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False,
+        delete_remote_dataset=True,
+        keep_job_inputs=False,
+        keep_source_inputs_for_retry=True,
+        share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    controller.db.create_job(
+        "probe-missing-submission",
+        "image",
+        "x",
+        {
+            "dataset_ref": "ci-user/stale-input",
+            "remote_submission_confirmed": False,
+        },
+    )
+    controller.db.update_job(
+        "probe-missing-submission",
+        status="submitting",
+        kernel_ref="ci-user/missing-kernel",
+    )
+    original_validate = controller.validate_current_credentials
+    original_status = controller._kernel_status
+    original_execute = controller._execute
+    original_cleanup = controller._cleanup_remote_refs
+    controller.validate_current_credentials = lambda max_age_seconds=300: None
+    controller._kernel_status = lambda _ref: (_ for _ in ()).throw(
+        RuntimeError("404 Not Found: kernel does not exist")
+    )
+    executed = []
+    cleanup_calls = []
+    controller._execute = lambda job_id: executed.append(job_id)
+    controller._cleanup_remote_refs = (
+        lambda kernel_ref="", dataset_ref="", force=False:
+        cleanup_calls.append((kernel_ref, dataset_ref, force))
+    )
+    try:
+        controller._resume_unconfirmed_submission("probe-missing-submission")
+        row = controller.db.get_job("probe-missing-submission")
+        assert row["status"] == "queued"
+        assert row["kernel_ref"] == ""
+        assert row["meta"]["dataset_ref"] == ""
+        assert row["meta"]["remote_submission_confirmed"] is False
+        assert executed == ["probe-missing-submission"]
+        assert ("", "ci-user/stale-input", False) in cleanup_calls
+    finally:
+        controller.validate_current_credentials = original_validate
+        controller._kernel_status = original_status
+        controller._execute = original_execute
+        controller._cleanup_remote_refs = original_cleanup
+        controller.executor.shutdown(wait=False)
+
+print("Explicitly missing unconfirmed kernel replays safely.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root,
+        storage_root=tmp / "media",
+        db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local",
+        worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1,
+        cli_retries=1,
+        kernel_timeout=60,
+        accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=True,
+        delete_remote_dataset=True,
+        keep_job_inputs=False,
+        keep_source_inputs_for_retry=True,
+        share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    controller.db.create_job(
+        "probe-ambiguous-submission",
+        "image",
+        "x",
+        {
+            "dataset_ref": "ci-user/input",
+            "remote_submission_confirmed": False,
+        },
+    )
+    controller.db.update_job(
+        "probe-ambiguous-submission",
+        status="submitting",
+        kernel_ref="ci-user/maybe-kernel",
+    )
+    original_validate = controller.validate_current_credentials
+    original_status = controller._kernel_status
+    original_execute = controller._execute
+    controller.validate_current_credentials = lambda max_age_seconds=300: None
+    controller._kernel_status = lambda _ref: (_ for _ in ()).throw(
+        RuntimeError("503 Service Unavailable")
+    )
+    executed = []
+    controller._execute = lambda job_id: executed.append(job_id)
+    try:
+        controller._resume_unconfirmed_submission("probe-ambiguous-submission")
+        row = controller.db.get_job("probe-ambiguous-submission")
+        assert row["status"] == "interrupted"
+        assert row["kernel_ref"] == "ci-user/maybe-kernel"
+        assert row["meta"]["remote_submission_confirmed"] is False
+        assert row["meta"]["failed_phase"] == "submission_unknown"
+        assert executed == []
+        assert "aucun nouveau push" in row["error"]
+    finally:
+        controller.validate_current_credentials = original_validate
+        controller._kernel_status = original_status
+        controller._execute = original_execute
+        controller.executor.shutdown(wait=False)
+
+print("Ambiguous unconfirmed submission never replays blindly.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root,
+        storage_root=tmp / "media",
+        db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local",
+        worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1,
+        cli_retries=1,
+        kernel_timeout=60,
+        accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=True,
+        delete_remote_dataset=True,
+        keep_job_inputs=False,
+        keep_source_inputs_for_retry=True,
+        share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    controller.db.create_job(
+        "probe-auth-submission",
+        "image",
+        "x",
+        {"remote_submission_confirmed": False},
+    )
+    controller.db.update_job(
+        "probe-auth-submission",
+        status="submitting",
+        kernel_ref="ci-user/kernel",
+    )
+    original_validate = controller.validate_current_credentials
+    controller.validate_current_credentials = lambda max_age_seconds=300: (
+        (_ for _ in ()).throw(RuntimeError("401 Unauthorized"))
+    )
+    try:
+        controller._resume_unconfirmed_submission("probe-auth-submission")
+        row = controller.db.get_job("probe-auth-submission")
+        assert row["status"] == "waiting_auth"
+        assert row["kernel_ref"] == "ci-user/kernel"
+        assert row["meta"]["remote_submission_confirmed"] is False
+        assert row["meta"]["recover_outputs_available"] is False
+        assert row["meta"]["failed_phase"] == "submission_auth_required"
+    finally:
+        controller.validate_current_credentials = original_validate
+        controller.executor.shutdown(wait=False)
+
+print("Unconfirmed submission waits for auth without replay.")
