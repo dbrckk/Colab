@@ -18,10 +18,13 @@ from typing import Any
 from .config import SETTINGS, Settings
 from .db import JobDB
 from .kaggle_auth import (
-    CREDENTIAL_KEYS,
+    apply_credential_env,
     auth_cache_valid,
     credential_fingerprint,
+    credential_save_message,
     credentials_ready as auth_credentials_ready,
+    restore_credential_env,
+    snapshot_credential_env,
     validate_credential_fields,
     write_credential_env,
 )
@@ -521,22 +524,12 @@ class KaggleController:
 
         validate_credential_fields(username, api_token, legacy_key)
 
-        previous_env = {key: os.environ.get(key) for key in CREDENTIAL_KEYS}
-
-        def _restore_previous_env() -> None:
-            for key, value in previous_env.items():
-                if value is None:
-                    os.environ.pop(key, None)
-                else:
-                    os.environ[key] = value
-
-        os.environ["KAGGLE_USERNAME"] = username
-        if api_token:
-            os.environ["KAGGLE_API_TOKEN"] = api_token
-            os.environ.pop("KAGGLE_KEY", None)
-        else:
-            os.environ["KAGGLE_KEY"] = legacy_key
-            os.environ.pop("KAGGLE_API_TOKEN", None)
+        previous_env = snapshot_credential_env()
+        apply_credential_env(
+            username=username,
+            api_token=api_token,
+            legacy_key=legacy_key,
+        )
 
         try:
             # Validate the candidate credentials before changing persistent state.
@@ -554,22 +547,16 @@ class KaggleController:
                     legacy_key=legacy_key,
                 )
         except Exception:
-            _restore_previous_env()
+            restore_credential_env(previous_env)
             raise
 
         resumed = self.resume_waiting_jobs()
         recovered = self.resume_recoverable_outputs()
-        mode = "API token" if api_token else "legacy key"
-        parts = []
-        if resumed:
-            parts.append(f"{resumed} job(s) en attente relancé(s)")
-        if recovered:
-            parts.append(f"{recovered} récupération(s) d'output relancée(s)")
-        suffix = (" " + " • ".join(parts) + ".") if parts else ""
-        return (
-            f"Identifiants Kaggle validés ({mode})"
-            + (" et sauvegardés dans le stockage privé configuré." if persist else ".")
-            + suffix
+        return credential_save_message(
+            api_token=api_token,
+            persist=persist,
+            resumed=resumed,
+            recovered=recovered,
         )
 
     def is_cancelled(self, job_id: str) -> bool:
