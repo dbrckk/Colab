@@ -3,9 +3,13 @@ import tempfile
 from pathlib import Path
 
 from kaggle_app.kaggle_auth import (
+    apply_credential_env,
     auth_cache_valid,
     credential_fingerprint,
+    credential_save_message,
     credentials_ready,
+    restore_credential_env,
+    snapshot_credential_env,
     validate_credential_fields,
     write_credential_env,
 )
@@ -94,3 +98,54 @@ with tempfile.TemporaryDirectory() as td:
     assert "KAGGLE_API_TOKEN=" not in text
 
 print("Atomic Kaggle credential persistence tests passed.")
+
+
+original = snapshot_credential_env()
+try:
+    apply_credential_env(
+        username="helper-user",
+        api_token="helper-token",
+        legacy_key="",
+    )
+    assert os.environ["KAGGLE_USERNAME"] == "helper-user"
+    assert os.environ["KAGGLE_API_TOKEN"] == "helper-token"
+    assert "KAGGLE_KEY" not in os.environ
+
+    snapshot = snapshot_credential_env()
+    apply_credential_env(
+        username="legacy-user",
+        api_token="",
+        legacy_key="legacy-secret",
+    )
+    assert os.environ["KAGGLE_USERNAME"] == "legacy-user"
+    assert os.environ["KAGGLE_KEY"] == "legacy-secret"
+    assert "KAGGLE_API_TOKEN" not in os.environ
+
+    restore_credential_env(snapshot)
+    assert os.environ["KAGGLE_USERNAME"] == "helper-user"
+    assert os.environ["KAGGLE_API_TOKEN"] == "helper-token"
+    assert "KAGGLE_KEY" not in os.environ
+finally:
+    restore_credential_env(original)
+
+message = credential_save_message(
+    api_token="token",
+    persist=True,
+    resumed=2,
+    recovered=1,
+)
+assert "API token" in message
+assert "sauvegardés" in message
+assert "2 job(s) en attente relancé(s)" in message
+assert "1 récupération(s) d'output relancée(s)" in message
+
+legacy_message = credential_save_message(
+    api_token="",
+    persist=False,
+    resumed=0,
+    recovered=0,
+)
+assert "legacy key" in legacy_message
+assert "sauvegardés" not in legacy_message
+
+print("Kaggle credential environment helper tests passed.")
