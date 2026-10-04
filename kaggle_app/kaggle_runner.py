@@ -37,6 +37,12 @@ from .kaggle_cleanup import cleanup_report, expired_exports, orphan_input_dirs
 from .kaggle_dashboard import dashboard_summary_text
 from .kaggle_dataset import write_dataset_bundle
 from .kaggle_health import recovery_diagnostic_lines
+from .kaggle_input_store import (
+    ensure_input_store,
+    hash_file as input_store_hash_file,
+    persist_input as persist_input_file,
+    unreferenced_store_files,
+)
 from .kaggle_inputs import validate_submission
 from .kaggle_jobs import (
     build_job_config,
@@ -616,61 +622,13 @@ class KaggleController:
             raise JobCancelled("Job annulé par l’utilisateur.")
 
     def _hash_file(self, path: Path) -> str:
-        h = hashlib.sha256()
-        with path.open("rb") as fh:
-            for chunk in iter(lambda: fh.read(4 * 1024 * 1024), b""):
-                h.update(chunk)
-        return h.hexdigest()
+        return input_store_hash_file(path)
 
     def _input_store_root(self) -> Path:
-        root = self.settings.storage_root / "_input_store"
-        root.mkdir(parents=True, exist_ok=True)
-        return root
+        return ensure_input_store(self.settings.storage_root)
 
     def _persist_input(self, job_id: str, source: str | None, stem: str) -> str:
-        if not source:
-            return ""
-        src = Path(source)
-        if not src.exists() or not src.is_file():
-            raise FileNotFoundError(f"Fichier uploadé introuvable: {src}")
-
-        store = self._input_store_root()
-        try:
-            if src.parent.resolve() == store.resolve():
-                return str(src)
-        except Exception:
-            pass
-
-        digest = self._hash_file(src)
-        suffix = src.suffix.lower()
-
-        # Same bytes may arrive under a renamed extension; reuse any existing
-        # canonical object with the same SHA-256 rather than storing it twice.
-        existing = next(
-            (
-                candidate for candidate in store.glob(f"{digest}.*")
-                if candidate.is_file() and not candidate.name.startswith(".")
-            ),
-            None,
-        )
-        if existing is not None:
-            return str(existing)
-
-        dest = store / f"{digest}{suffix}"
-        if not dest.exists() or dest.stat().st_size != src.stat().st_size:
-            tmp = store / f".{digest}.{uuid.uuid4().hex[:8]}.part"
-            try:
-                shutil.copy2(src, tmp)
-                if self._hash_file(tmp) != digest:
-                    raise RuntimeError("Checksum invalide après copie de l'upload.")
-                os.replace(tmp, dest)
-            finally:
-                try:
-                    if tmp.exists():
-                        tmp.unlink()
-                except OSError:
-                    pass
-        return str(dest)
+        return persist_input_file(self.settings.storage_root, source)
 
     def _referenced_input_paths(self) -> set[str]:
         refs: set[str] = set()
@@ -686,24 +644,15 @@ class KaggleController:
         return refs
 
     def _gc_input_store(self) -> tuple[int, int]:
-        store = self.settings.storage_root / "_input_store"
-        if not store.exists():
-            return 0, 0
-        refs = self._referenced_input_paths()
         removed = 0
         reclaimed = 0
-        for p in store.iterdir():
-            if not p.is_file() or p.name.startswith("."):
-                continue
+        for path in unreferenced_store_files(
+            self.settings.storage_root,
+            referenced_paths=self._referenced_input_paths(),
+        ):
             try:
-                resolved = str(p.resolve())
-            except Exception:
-                resolved = str(p)
-            if resolved in refs:
-                continue
-            try:
-                reclaimed += p.stat().st_size
-                p.unlink()
+                reclaimed += path.stat().st_size
+                path.unlink()
                 removed += 1
             except OSError:
                 pass
