@@ -46,7 +46,8 @@ def validate_credential_fields(username: str, api_token: str, legacy_key: str) -
         raise ValueError("Ajoute KAGGLE_API_TOKEN (recommandé) ou l'ancien KAGGLE_KEY.")
 
     def _safe_env_value(name: str, value: str) -> None:
-        if any(ch in value for ch in ("\n", "\r", "\x00")):
+        forbidden = ("\n", "\r", "\x00", "\\n", "\\r", "\\x00")
+        if any(token in value for token in forbidden):
             raise ValueError(f"{name} contient un caractère interdit.")
         if len(value) > 4096:
             raise ValueError(f"{name} est anormalement long.")
