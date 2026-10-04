@@ -1089,7 +1089,11 @@ class KaggleController:
                     job_id,
                     status="submitting",
                     kernel_ref=kernel_ref,
-                    meta_json={**job.get("meta", {}), "dataset_ref": dataset_ref},
+                    meta_json={
+                        **job.get("meta", {}),
+                        "dataset_ref": dataset_ref,
+                        "remote_submission_confirmed": False,
+                    },
                 )
                 self._check_cancelled(job_id)
                 try:
@@ -1110,7 +1114,15 @@ class KaggleController:
                         self._kernel_status(kernel_ref)
                     except Exception:
                         raise push_exc
-                self.db.update_job(job_id, status="queued")
+                self.db.update_job(
+                    job_id,
+                    status="queued",
+                    meta_json={
+                        **job.get("meta", {}),
+                        "dataset_ref": dataset_ref,
+                        "remote_submission_confirmed": True,
+                    },
+                )
 
                 wait_for_kernel(
                     kernel_ref,
@@ -1124,6 +1136,7 @@ class KaggleController:
                         meta_json={
                             **job.get("meta", {}),
                             "dataset_ref": dataset_ref,
+                            "remote_submission_confirmed": True,
                             "kaggle_status": raw[-1500:],
                         },
                     ),
@@ -1158,6 +1171,10 @@ class KaggleController:
                 current_meta = current.get("meta") or {}
                 auth_required = is_auth_cli_error(str(exc))
                 remote_failed = isinstance(exc, RemoteKernelFailed)
+                submission_pending = bool(
+                    kernel_ref
+                    and current_meta.get("remote_submission_confirmed") is False
+                )
                 preserve_kernel = preserve_kernel_after_execute_failure(
                     kernel_ref=kernel_ref,
                     failed_phase=failed_phase,
@@ -1174,7 +1191,7 @@ class KaggleController:
                         ),
                         meta_json={
                             **current_meta,
-                            "recover_outputs_available": bool(kernel_ref),
+                            "recover_outputs_available": bool(kernel_ref) and not submission_pending,
                             "failed_phase": "auth_required",
                             "remote_failure_confirmed": False,
                         },
@@ -1186,7 +1203,7 @@ class KaggleController:
                         error=f"{type(exc).__name__}: {exc}",
                         meta_json={
                             **current_meta,
-                            "recover_outputs_available": preserve_kernel,
+                            "recover_outputs_available": preserve_kernel and not submission_pending,
                             "failed_phase": failed_phase,
                             "remote_failure_confirmed": remote_failed,
                         },
@@ -1194,8 +1211,14 @@ class KaggleController:
         finally:
             current = self.db.get_job(job_id) or {}
             meta = current.get("meta") or {}
+            submission_pending = submission_confirmation_pending(current)
             preserve_kernel = bool(meta.get("recover_outputs_available"))
-            if preserve_kernel:
+            if submission_pending:
+                # The push may have reached Kaggle even if the client never saw
+                # the response. Preserve both refs until an explicit probe proves
+                # whether replay is safe.
+                pass
+            elif preserve_kernel:
                 # Inputs dataset is no longer needed once the kernel has completed.
                 self._cleanup_remote_refs("", dataset_ref)
             else:
