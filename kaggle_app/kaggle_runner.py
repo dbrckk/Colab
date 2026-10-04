@@ -46,6 +46,11 @@ from .kaggle_input_store import (
     unreferenced_store_files,
 )
 from .kaggle_inputs import validate_submission
+from .kaggle_job_policy import (
+    can_cancel_locally,
+    retry_block_reason,
+    terminal_status_message,
+)
 from .kaggle_jobs import (
     build_job_config,
     dataset_ref as build_dataset_ref,
@@ -567,8 +572,9 @@ class KaggleController:
         job = self.db.get_job(job_id)
         if not job:
             return "Job introuvable."
-        if job.get("status") in {"done", "error", "cancelled", "interrupted"}:
-            return f"Job déjà terminé: {job.get('status')}"
+        terminal_message = terminal_status_message(job)
+        if terminal_message:
+            return terminal_message
 
         kernel_ref = job.get("kernel_ref") or ""
         meta = job.get("meta") or {}
@@ -582,7 +588,11 @@ class KaggleController:
 
         # Purely local jobs (not authenticated yet, or queued without an active
         # executor future) can be cancelled synchronously.
-        if not kernel_ref and (cancelled_before_start or not future_active):
+        if can_cancel_locally(
+            kernel_ref=kernel_ref,
+            future_active=future_active,
+            cancelled_before_start=cancelled_before_start,
+        ):
             self.db.update_job(job_id, status="cancelled", error="")
             with self._lock:
                 self._cancelled.discard(job_id)
@@ -1359,23 +1369,9 @@ class KaggleController:
         old = self.db.get_job(job_id)
         if not old:
             raise ValueError("Job introuvable.")
-        active_states = {
-            "preparing", "uploading_inputs", "submitting", "queued",
-            "waiting_auth", "running", "recovering", "downloading",
-            "cancel_requested",
-        }
-        if old.get("status") in active_states:
-            if old.get("status") == "waiting_auth":
-                if old.get("kernel_ref"):
-                    raise RuntimeError(
-                        "Ce job attend l'authentification pour reprendre son kernel Kaggle existant. "
-                        "Configure les identifiants au lieu de le relancer."
-                    )
-                raise RuntimeError(
-                    "Ce job attend l'authentification pour reprendre la file locale. "
-                    "Configure les identifiants au lieu de créer un doublon."
-                )
-            raise RuntimeError("Ce job est encore actif.")
+        block_reason = retry_block_reason(old)
+        if block_reason:
+            raise RuntimeError(block_reason)
 
         meta = old.get("meta") or {}
         if old.get("task") == "image_batch":
