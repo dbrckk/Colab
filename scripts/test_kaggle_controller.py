@@ -3231,3 +3231,53 @@ with tempfile.TemporaryDirectory() as td:
         controller.executor.shutdown(wait=False)
 
 print("Confirmed push boundary is persisted before output download.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root,
+        storage_root=tmp / "media",
+        db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local",
+        worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1,
+        cli_retries=1,
+        kernel_timeout=60,
+        accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False,
+        delete_remote_dataset=True,
+        keep_job_inputs=False,
+        keep_source_inputs_for_retry=True,
+        share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    controller.db.create_job(
+        "manual-probe-submission",
+        "image",
+        "x",
+        {
+            "remote_submission_confirmed": False,
+            "recover_outputs_available": False,
+            "failed_phase": "submission_unknown",
+        },
+    )
+    controller.db.update_job(
+        "manual-probe-submission",
+        status="interrupted",
+        kernel_ref="ci-user/maybe-kernel",
+    )
+    original_probe = controller._resume_unconfirmed_submission
+    probed = []
+    controller._resume_unconfirmed_submission = lambda job_id: probed.append(job_id)
+    try:
+        message = controller.recover_outputs("manual-probe-submission")
+        controller.executor.shutdown(wait=True)
+        row = controller.db.get_job("manual-probe-submission")
+        assert row["status"] == "recovering"
+        assert probed == ["manual-probe-submission"]
+        assert "Aucun nouveau push" in message
+    finally:
+        controller._resume_unconfirmed_submission = original_probe
+
+print("Manual recovery safely probes unconfirmed Kaggle submissions.")
