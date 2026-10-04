@@ -10,6 +10,7 @@ from kaggle_app.kaggle_recovery import (
     recovery_marked,
     remote_kernel_is_preserved,
     startup_recovery_action,
+    submission_confirmation_pending,
 )
 
 
@@ -196,3 +197,37 @@ expired = expired_recovery_candidates(
 assert [row["id"] for row in expired] == ["expired"]
 
 print("Kaggle expired recovery selection tests passed.")
+
+
+unconfirmed = row(
+    "submitting",
+    "u/k",
+    {"remote_submission_confirmed": False},
+)
+assert submission_confirmation_pending(unconfirmed) is True
+assert startup_recovery_action(unconfirmed, True) == "probe_submission"
+assert startup_recovery_action(unconfirmed, False) == "wait_submission_auth"
+
+unconfirmed_error = row(
+    "error",
+    "u/k",
+    {
+        "remote_submission_confirmed": False,
+        "recover_outputs_available": False,
+    },
+)
+assert startup_recovery_action(unconfirmed_error, True) == "probe_submission"
+
+legacy_submitting = row("submitting", "u/k", {})
+assert submission_confirmation_pending(legacy_submitting) is False
+assert startup_recovery_action(legacy_submitting, True) == "resume_remote"
+
+confirmed = row(
+    "submitting",
+    "u/k",
+    {"remote_submission_confirmed": True},
+)
+assert submission_confirmation_pending(confirmed) is False
+assert startup_recovery_action(confirmed, True) == "resume_remote"
+
+print("Kaggle unconfirmed submission recovery policy tests passed.")
