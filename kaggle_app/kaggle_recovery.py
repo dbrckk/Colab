@@ -117,3 +117,18 @@ def preserve_kernel_after_execute_failure(
         }
         and not remote_failed
     )
+
+
+def expired_recovery_candidates(
+    rows: list[dict[str, Any]],
+    *,
+    now: float,
+    retention_days: int,
+) -> list[dict[str, Any]]:
+    cutoff = now - max(1, int(retention_days)) * 86400
+    return [
+        row
+        for row in rows
+        if recovery_marked(row)
+        and float(row.get("updated_at") or 0) < cutoff
+    ]
