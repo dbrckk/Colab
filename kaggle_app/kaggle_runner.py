@@ -39,6 +39,7 @@ from .kaggle_protocol import (
 from .kaggle_cleanup import cleanup_report, expired_exports, orphan_input_dirs
 from .kaggle_dashboard import dashboard_summary_text
 from .kaggle_dataset import write_dataset_bundle
+from .kaggle_export import build_job_archive
 from .kaggle_health import recovery_diagnostic_lines
 from .kaggle_input_store import (
     ensure_input_store,
@@ -1395,43 +1396,14 @@ class KaggleController:
         job = self.db.get_job(job_id)
         if not job:
             raise ValueError("Job introuvable.")
-        artifacts = self.db.artifacts(job_id)
-        export_root = self.settings.storage_root / "_exports"
-        export_root.mkdir(parents=True, exist_ok=True)
-        work = export_root / f".{job_id}-export"
-        shutil.rmtree(work, ignore_errors=True)
-        work.mkdir(parents=True, exist_ok=True)
-        try:
-            media_dir = work / "media"
-            media_dir.mkdir()
-            exported_artifacts = []
-            for artifact in artifacts:
-                src = Path(artifact.get("path") or "")
-                if not src.exists() or not src.is_file():
-                    continue
-                target = media_dir / src.name
-                shutil.copy2(src, target)
-                exported_artifacts.append({
-                    "name": target.name,
-                    "kind": artifact.get("kind") or "file",
-                    "size": int(target.stat().st_size),
-                    "sha256": self._hash_file(target),
-                })
-            manifest = {
-                "job": job,
-                "artifacts": artifacts,
-                "exported_artifacts": exported_artifacts,
-                "exported_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-            }
-            (work / "job.json").write_text(
-                json.dumps(manifest, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            archive_base = export_root / job_id
-            archive_path = shutil.make_archive(str(archive_base), "zip", root_dir=work)
-            return archive_path
-        finally:
-            shutil.rmtree(work, ignore_errors=True)
+        return build_job_archive(
+            export_root=self.settings.storage_root / "_exports",
+            job_id=job_id,
+            job=job,
+            artifacts=self.db.artifacts(job_id),
+            hash_file=self._hash_file,
+            exported_at=time.strftime("%Y-%m-%d %H:%M:%S"),
+        )
 
     def delete_local_job(self, job_id: str) -> str:
         job = self.db.get_job(job_id)
