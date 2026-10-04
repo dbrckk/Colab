@@ -15,6 +15,7 @@ on:
       - "scripts/test_gradio_ui_smoke.py"
       - "scripts/test_kaggle_controller.py"
       - "scripts/test_kaggle_auth.py"
+      - "scripts/test_kaggle_dashboard.py"
       - "scripts/test_kaggle_dataset.py"
       - "scripts/test_kaggle_inputs.py"
       - "scripts/test_kaggle_jobs.py"
@@ -40,6 +41,7 @@ on:
       - "scripts/test_gradio_ui_smoke.py"
       - "scripts/test_kaggle_controller.py"
       - "scripts/test_kaggle_auth.py"
+      - "scripts/test_kaggle_dashboard.py"
       - "scripts/test_kaggle_dataset.py"
       - "scripts/test_kaggle_inputs.py"
       - "scripts/test_kaggle_jobs.py"
@@ -81,6 +83,8 @@ jobs:
         run: python scripts/test_kaggle_controller.py
       - name: Kaggle auth policy unit test
         run: python scripts/test_kaggle_auth.py
+      - name: Kaggle dashboard summary unit test
+        run: python scripts/test_kaggle_dashboard.py
       - name: Kaggle dataset staging unit test
         run: python scripts/test_kaggle_dataset.py
       - name: Kaggle submission validation unit test
