@@ -85,3 +85,43 @@ finally:
     ui.controller.job_storage_bytes = original_job_storage_bytes
 
 print("Waiting-auth UI guidance passed.")
+
+
+original_job = ui.controller.job
+original_artifacts = ui.controller.artifacts
+original_jobs = ui.controller.jobs
+original_queue_position = ui.controller.queue_position
+original_job_storage_bytes = ui.controller.job_storage_bytes
+try:
+    ui.controller.job = lambda _job_id: {
+        "id": "unconfirmed-submission",
+        "task": "image",
+        "status": "waiting_auth",
+        "kernel_ref": "ci-user/maybe-kernel",
+        "prompt": "x",
+        "error": "Authentication required",
+        "meta": {
+            "remote_submission_confirmed": False,
+            "recover_outputs_available": False,
+        },
+        "created_at": 1,
+        "updated_at": 1,
+    }
+    ui.controller.artifacts = lambda _job_id: []
+    ui.controller.jobs = lambda _limit=100: []
+    ui.controller.queue_position = lambda _job_id: None
+    ui.controller.job_storage_bytes = lambda _job_id: 0
+
+    status, *_ = ui._refresh("unconfirmed-submission")
+    assert "Soumission Kaggle à confirmer" in status
+    assert "Aucun nouveau push" in status
+    assert "Si Kaggle confirme que le kernel est absent" in status
+    assert "reprendre sans recalcul" not in status
+finally:
+    ui.controller.job = original_job
+    ui.controller.artifacts = original_artifacts
+    ui.controller.jobs = original_jobs
+    ui.controller.queue_position = original_queue_position
+    ui.controller.job_storage_bytes = original_job_storage_bytes
+
+print("Unconfirmed Kaggle submission UI guidance passed.")
