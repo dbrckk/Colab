@@ -9,10 +9,31 @@ KERNEL_TERMINAL_BAD = ("error", "failed", "cancelled", "canceled")
 
 def is_auth_cli_error(text: str) -> bool:
     low = (text or "").lower()
-    return any(token in low for token in (
-        "401", "403", "unauthorized", "forbidden",
-        "authentication required", "invalid token", "api token",
-    ))
+
+    direct_markers = (
+        "401",
+        "unauthorized",
+        "authentication required",
+        "invalid token",
+        "invalid api token",
+        "credentials are required",
+        "missing credentials",
+        "authentication failed",
+    )
+    if any(marker in low for marker in direct_markers):
+        return True
+
+    permission_markers = ("403", "forbidden")
+    credential_context = (
+        "token",
+        "credential",
+        "authentication",
+        "api key",
+    )
+    return (
+        any(marker in low for marker in permission_markers)
+        and any(marker in low for marker in credential_context)
+    )
 
 
 def is_transient_cli_error(text: str) -> bool:
