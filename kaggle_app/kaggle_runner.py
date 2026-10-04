@@ -1463,6 +1463,7 @@ class KaggleController:
                 self.db.list_jobs(1000),
                 recovery_marked=recovery_marked,
                 remote_kernel_is_preserved=remote_kernel_is_preserved,
+                submission_confirmation_pending=submission_confirmation_pending,
             )
         )
 
