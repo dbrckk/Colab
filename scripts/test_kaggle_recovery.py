@@ -2,6 +2,7 @@ from kaggle_app.kaggle_recovery import (
     MAX_AUTO_RECOVERY_ATTEMPTS,
     auto_recovery_attempts,
     classify_remote_recovery_failure,
+    expired_recovery_candidates,
     has_recoverable_outputs,
     keep_remote_kernel_for_retry,
     preserve_kernel_after_execute_failure,
@@ -161,3 +162,37 @@ assert preserve_kernel_after_execute_failure(
 ) is False
 
 print("Kaggle recovery failure classification tests passed.")
+
+
+now = 1_000_000.0
+rows = [
+    {
+        "id": "expired",
+        "status": "error",
+        "kernel_ref": "u/k",
+        "updated_at": now - 15 * 86400,
+        "meta": {"recover_outputs_available": True},
+    },
+    {
+        "id": "recent",
+        "status": "error",
+        "kernel_ref": "u/k2",
+        "updated_at": now - 2 * 86400,
+        "meta": {"recover_outputs_available": True},
+    },
+    {
+        "id": "not-marked",
+        "status": "error",
+        "kernel_ref": "u/k3",
+        "updated_at": now - 30 * 86400,
+        "meta": {"recover_outputs_available": False},
+    },
+]
+expired = expired_recovery_candidates(
+    rows,
+    now=now,
+    retention_days=14,
+)
+assert [row["id"] for row in expired] == ["expired"]
+
+print("Kaggle expired recovery selection tests passed.")
