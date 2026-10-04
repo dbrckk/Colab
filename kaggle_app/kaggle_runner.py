@@ -33,6 +33,7 @@ from .kaggle_protocol import (
     parse_kernel_status,
     remote_kernel_missing,
 )
+from .kaggle_dashboard import dashboard_summary_text
 from .kaggle_dataset import write_dataset_bundle
 from .kaggle_inputs import validate_submission
 from .kaggle_jobs import (
@@ -1321,15 +1322,6 @@ class KaggleController:
 
     def dashboard_summary(self) -> str:
         jobs = self.db.list_jobs(1000)
-        active_states = {
-            "preparing", "uploading_inputs", "submitting",
-            "queued", "waiting_auth", "running", "recovering", "downloading",
-            "cancel_requested",
-        }
-        active = sum(1 for j in jobs if j.get("status") in active_states)
-        done = sum(1 for j in jobs if j.get("status") == "done")
-        failed = sum(1 for j in jobs if j.get("status") in {"error", "interrupted"})
-        cancelled = sum(1 for j in jobs if j.get("status") == "cancelled")
 
         now = time.time()
         if now - float(self._storage_cache.get("ts") or 0) > 60:
@@ -1348,22 +1340,17 @@ class KaggleController:
         else:
             total_bytes = int(self._storage_cache.get("bytes") or 0)
 
-        if total_bytes >= 1024**3:
-            storage = f"{total_bytes / 1024**3:.2f} Go"
-        else:
-            storage = f"{total_bytes / 1024**2:.1f} Mo"
-
         if self.credentials_recently_validated():
             auth = "Kaggle prêt"
         elif self.credentials_ready():
             auth = "Kaggle configuré — à valider"
         else:
             auth = "Kaggle à configurer"
-        return (
-            f"**{auth}**  •  "
-            f"Actifs **{active}**  •  Terminés **{done}**  •  "
-            f"Erreurs **{failed}**  •  Annulés **{cancelled}**  •  "
-            f"Stockage **{storage}**"
+
+        return dashboard_summary_text(
+            jobs,
+            total_bytes=total_bytes,
+            auth_label=auth,
         )
 
     def health_check(self) -> str:
