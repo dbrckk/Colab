@@ -48,6 +48,7 @@ from .kaggle_jobs import (
 from .kaggle_kernel import write_kernel_bundle
 from .kaggle_monitor import wait_for_kernel
 from .kaggle_outputs import validate_downloaded_outputs
+from .kaggle_reconcile import classify_missing_local_outputs, has_valid_local_media
 from .kaggle_recovery import (
     auto_recovery_attempts,
     classify_remote_recovery_failure,
@@ -1165,32 +1166,27 @@ class KaggleController:
             if row.get("status") != "done":
                 continue
             checked += 1
-            artifacts = self.db.artifacts(row["id"])
-            valid_media = [
-                a for a in artifacts
-                if a.get("kind") in {"image", "video"}
-                and Path(a.get("path") or "").is_file()
-            ]
-            if valid_media:
+            if has_valid_local_media(self.db.artifacts(row["id"])):
                 continue
+
             kernel_ref = row.get("kernel_ref") or ""
-            if not kernel_ref:
-                self.db.update_job(
-                    row["id"],
-                    status="error",
-                    error="Résultats locaux manquants et aucun kernel Kaggle n'est disponible pour récupération.",
-                )
-                continue
-            try:
-                state, _ = self._kernel_status(kernel_ref)
-            except Exception:
-                state = "unknown"
-            if state == "complete":
+            state = "unknown"
+            if kernel_ref:
+                try:
+                    state, _ = self._kernel_status(kernel_ref)
+                except Exception:
+                    state = "unknown"
+
+            outcome, can_recover, error = classify_missing_local_outputs(
+                kernel_ref=kernel_ref,
+                kernel_state=state,
+            )
+            if outcome == "recoverable":
                 meta = row.get("meta") or {}
                 self.db.update_job(
                     row["id"],
                     status="error",
-                    error="Résultats locaux manquants; outputs Kaggle encore disponibles.",
+                    error=error,
                     meta_json={
                         **meta,
                         "recover_outputs_available": True,
@@ -1198,22 +1194,11 @@ class KaggleController:
                     },
                 )
                 recoverable += 1
-            elif state == "error":
-                self.db.update_job(
-                    row["id"],
-                    status="error",
-                    error="Résultats locaux manquants et le kernel Kaggle n'est plus récupérable.",
-                )
             else:
-                # Do not leave a job falsely marked done when neither local
-                # media nor a confirmed remote recovery source can be proven.
                 self.db.update_job(
                     row["id"],
                     status="error",
-                    error=(
-                        "Résultats locaux manquants. L'état du kernel Kaggle "
-                        "n'a pas pu être confirmé; réessaie le diagnostic ou relance le job."
-                    ),
+                    error=error,
                 )
         return checked, recoverable
 
