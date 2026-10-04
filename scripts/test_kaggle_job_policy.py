@@ -1,5 +1,6 @@
 from kaggle_app.kaggle_job_policy import (
     can_cancel_locally,
+    delete_block_reason,
     retry_block_reason,
     terminal_status_message,
 )
@@ -43,3 +44,20 @@ assert can_cancel_locally(
 ) is False
 
 print("Kaggle job state policy tests passed.")
+
+
+for status in (
+    "queued",
+    "running",
+    "submitting",
+    "recovering",
+    "downloading",
+    "cancel_requested",
+):
+    assert delete_block_reason({"status": status}) == "Annule d'abord le job actif."
+
+assert delete_block_reason({"status": "done"}) is None
+assert delete_block_reason({"status": "error"}) is None
+assert delete_block_reason({"status": "waiting_auth"}) is None
+
+print("Kaggle local deletion policy tests passed.")
