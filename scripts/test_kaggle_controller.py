@@ -2835,3 +2835,56 @@ with tempfile.TemporaryDirectory() as td:
                 os.environ[key] = value
 
 print("Kaggle health check refreshes and invalidates auth readiness cache.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root,
+        storage_root=tmp / "media",
+        db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local",
+        worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1,
+        cli_retries=1,
+        kernel_timeout=60,
+        accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False,
+        delete_remote_dataset=True,
+        keep_job_inputs=False,
+        keep_source_inputs_for_retry=True,
+        share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    controller.db.create_job(
+        "commit-output-idempotent",
+        "image",
+        "x",
+        {
+            "recover_outputs_available": True,
+            "failed_phase": "downloading",
+            "auto_recovery_attempts": 2,
+        },
+    )
+    download = tmp / "download"
+    download.mkdir()
+    (download / "result.png").write_bytes(b"image-bytes")
+    manifest = {"status": "done", "files": ["result.png"]}
+    job = controller.db.get_job("commit-output-idempotent")
+    controller._cleanup_inputs = lambda _job_id: None
+    try:
+        controller._commit_downloaded_outputs(job, download, manifest)
+        controller._commit_downloaded_outputs(job, download, manifest)
+        row = controller.db.get_job("commit-output-idempotent")
+        artifacts = controller.db.artifacts("commit-output-idempotent")
+        assert row["status"] == "done"
+        assert row["error"] == ""
+        assert row["meta"]["recover_outputs_available"] is False
+        assert row["meta"]["failed_phase"] == ""
+        assert row["meta"]["auto_recovery_attempts"] == 0
+        assert row["meta"]["result_manifest"] == manifest
+        assert len(artifacts) == 1
+    finally:
+        controller.executor.shutdown(wait=False)
+
+print("Unified output finalization idempotency passed.")
