@@ -77,6 +77,7 @@ from .kaggle_recovery import (
     recovery_marked,
     remote_kernel_is_preserved,
     startup_recovery_action,
+    submission_confirmation_pending,
 )
 from .storage import import_outputs, scan_outputs
 
@@ -135,6 +136,20 @@ class KaggleController:
                     job_id,
                     status="waiting_auth",
                     error="En attente des identifiants Kaggle pour reprendre la préparation locale.",
+                )
+            elif action == "probe_submission":
+                with self._lock:
+                    self._futures[job_id] = self.executor.submit(
+                        self._resume_unconfirmed_submission, job_id
+                    )
+            elif action == "wait_submission_auth":
+                self.db.update_job(
+                    job_id,
+                    status="waiting_auth",
+                    error=(
+                        "En attente des identifiants Kaggle pour confirmer une soumission "
+                        "distante encore incertaine."
+                    ),
                 )
             elif action == "resume_remote":
                 if row.get("status") == "waiting_auth":
@@ -210,6 +225,96 @@ class KaggleController:
     @staticmethod
     def _remote_kernel_missing(exc: Exception) -> bool:
         return remote_kernel_missing(str(exc))
+
+    def _resume_unconfirmed_submission(self, job_id: str) -> None:
+        job = self.db.get_job(job_id)
+        if not job:
+            return
+        kernel_ref = job.get("kernel_ref") or ""
+        meta = job.get("meta") or {}
+        dataset_ref = meta.get("dataset_ref") or ""
+
+        if not kernel_ref:
+            self.db.update_job(
+                job_id,
+                status="queued",
+                error="",
+                meta_json={**meta, "dataset_ref": ""},
+            )
+            self._execute(job_id)
+            return
+
+        try:
+            self.validate_current_credentials()
+            self._kernel_status(kernel_ref)
+        except Exception as exc:
+            if is_auth_cli_error(str(exc)):
+                self.db.update_job(
+                    job_id,
+                    status="waiting_auth",
+                    error=(
+                        "Authentification Kaggle requise pour confirmer la soumission distante "
+                        "avant toute reprise."
+                    ),
+                    meta_json={
+                        **meta,
+                        "remote_submission_confirmed": False,
+                        "recover_outputs_available": False,
+                        "failed_phase": "submission_auth_required",
+                        "remote_failure_confirmed": False,
+                    },
+                )
+                return
+
+            if self._remote_kernel_missing(exc):
+                if dataset_ref:
+                    self._cleanup_remote_refs("", dataset_ref)
+                self.db.update_job(
+                    job_id,
+                    status="queued",
+                    kernel_ref="",
+                    error="",
+                    meta_json={
+                        **meta,
+                        "dataset_ref": "",
+                        "remote_submission_confirmed": False,
+                        "recover_outputs_available": False,
+                        "failed_phase": "",
+                        "remote_failure_confirmed": False,
+                    },
+                )
+                self._execute(job_id)
+                return
+
+            self.db.update_job(
+                job_id,
+                status="interrupted",
+                error=(
+                    "Soumission Kaggle non confirmée. L'état distant reste ambigu; "
+                    "aucun nouveau push n'a été effectué pour éviter un double calcul. "
+                    f"{type(exc).__name__}: {exc}"
+                ),
+                meta_json={
+                    **meta,
+                    "remote_submission_confirmed": False,
+                    "recover_outputs_available": False,
+                    "failed_phase": "submission_unknown",
+                    "remote_failure_confirmed": False,
+                },
+            )
+            return
+
+        self.db.update_job(
+            job_id,
+            status="recovering",
+            error="",
+            meta_json={
+                **meta,
+                "remote_submission_confirmed": True,
+                "failed_phase": "",
+            },
+        )
+        self._recover_remote_job(job_id)
 
     def _recover_remote_job(self, job_id: str) -> None:
         job = self.db.get_job(job_id)
@@ -340,7 +445,12 @@ class KaggleController:
                 if future is not None and not future.done():
                     continue
                 kernel_ref = row.get("kernel_ref") or ""
-                if kernel_ref:
+                if submission_confirmation_pending(row):
+                    self.db.update_job(job_id, status="recovering", error="")
+                    self._futures[job_id] = self.executor.submit(
+                        self._resume_unconfirmed_submission, job_id
+                    )
+                elif kernel_ref:
                     self.db.update_job(job_id, status="recovering", error="")
                     self._futures[job_id] = self.executor.submit(
                         self._recover_remote_job, job_id
@@ -391,7 +501,12 @@ class KaggleController:
                         "last_auto_recovery_at": time.time(),
                     },
                 )
-                self._futures[job_id] = self.executor.submit(self._recover_remote_job, job_id)
+                target = (
+                    self._resume_unconfirmed_submission
+                    if submission_confirmation_pending(row)
+                    else self._recover_remote_job
+                )
+                self._futures[job_id] = self.executor.submit(target, job_id)
                 resumed += 1
         return resumed
 
@@ -1107,7 +1222,12 @@ class KaggleController:
             if future is not None and not future.done():
                 raise RuntimeError("Une récupération est déjà en cours pour ce job.")
             self.db.update_job(job_id, status="recovering", error="")
-            self._futures[job_id] = self.executor.submit(self._recover_remote_job, job_id)
+            target = (
+                self._resume_unconfirmed_submission
+                if submission_confirmation_pending(job)
+                else self._recover_remote_job
+            )
+            self._futures[job_id] = self.executor.submit(target, job_id)
         return "Récupération des outputs Kaggle relancée sans recalcul GPU."
 
     def reconcile_completed_jobs(self) -> tuple[int, int]:
