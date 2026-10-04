@@ -3119,3 +3119,115 @@ with tempfile.TemporaryDirectory() as td:
         controller.executor.shutdown(wait=False)
 
 print("Unconfirmed submission waits for auth without replay.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root,
+        storage_root=tmp / "media",
+        db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local",
+        worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1,
+        cli_retries=1,
+        kernel_timeout=60,
+        accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=True,
+        delete_remote_dataset=True,
+        keep_job_inputs=False,
+        keep_source_inputs_for_retry=True,
+        share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    controller.db.create_job("push-ambiguous-boundary", "image", "x", {})
+    original_validate = controller.validate_current_credentials
+    original_prepare = controller._prepare_kernel
+    original_run = controller._run
+    original_status = controller._kernel_status
+    original_cleanup = controller._cleanup_remote_refs
+    controller.validate_current_credentials = lambda max_age_seconds=300: None
+    controller._prepare_kernel = lambda job, folder, dataset_ref: "ci-user/maybe-pushed"
+    controller._run = lambda *args, **kwargs: (_ for _ in ()).throw(
+        RuntimeError("connection reset after request")
+    )
+    controller._kernel_status = lambda _ref: (_ for _ in ()).throw(
+        RuntimeError("503 Service Unavailable")
+    )
+    cleanup_calls = []
+    controller._cleanup_remote_refs = (
+        lambda kernel_ref="", dataset_ref="", force=False:
+        cleanup_calls.append((kernel_ref, dataset_ref, force))
+    )
+    try:
+        controller._execute("push-ambiguous-boundary")
+        row = controller.db.get_job("push-ambiguous-boundary")
+        assert row["status"] == "error"
+        assert row["kernel_ref"] == "ci-user/maybe-pushed"
+        assert row["meta"]["remote_submission_confirmed"] is False
+        assert row["meta"]["recover_outputs_available"] is False
+        assert cleanup_calls == []
+    finally:
+        controller.validate_current_credentials = original_validate
+        controller._prepare_kernel = original_prepare
+        controller._run = original_run
+        controller._kernel_status = original_status
+        controller._cleanup_remote_refs = original_cleanup
+        controller.executor.shutdown(wait=False)
+
+print("Ambiguous push boundary preserves all remote refs without replay.")
+
+
+with tempfile.TemporaryDirectory() as td:
+    tmp = Path(td)
+    settings = Settings(
+        root=repo_root,
+        storage_root=tmp / "media",
+        db_path=tmp / "jobs.sqlite3",
+        env_file=tmp / ".env.local",
+        worker_path=repo_root / "kaggle_worker" / "worker.py",
+        poll_seconds=1,
+        cli_retries=1,
+        kernel_timeout=60,
+        accelerator="NvidiaTeslaT4",
+        delete_remote_kernel=False,
+        delete_remote_dataset=False,
+        keep_job_inputs=False,
+        keep_source_inputs_for_retry=True,
+        share_gradio=False,
+    )
+    controller = KaggleController(settings)
+    controller.db.create_job("push-confirmed-boundary", "image", "x", {})
+    original_validate = controller.validate_current_credentials
+    original_prepare = controller._prepare_kernel
+    original_run = controller._run
+    original_status = controller._kernel_status
+    original_download = controller._download_validated_outputs
+    original_commit = controller._commit_downloaded_outputs
+    controller.validate_current_credentials = lambda max_age_seconds=300: None
+    controller._prepare_kernel = lambda job, folder, dataset_ref: "ci-user/confirmed-kernel"
+    controller._run = lambda *args, **kwargs: ""
+    controller._kernel_status = lambda _ref: ("complete", "status: complete")
+    controller._download_validated_outputs = lambda job, kernel_ref, download: ([], {})
+    captured = []
+    def _capture_commit(job, download, manifest):
+        captured.append((controller.db.get_job(job["id"]) or {})["meta"])
+        controller.db.update_job(job["id"], status="done")
+        return []
+    controller._commit_downloaded_outputs = _capture_commit
+    try:
+        controller._execute("push-confirmed-boundary")
+        row = controller.db.get_job("push-confirmed-boundary")
+        assert row["status"] == "done"
+        assert captured
+        assert captured[0]["remote_submission_confirmed"] is True
+    finally:
+        controller.validate_current_credentials = original_validate
+        controller._prepare_kernel = original_prepare
+        controller._run = original_run
+        controller._kernel_status = original_status
+        controller._download_validated_outputs = original_download
+        controller._commit_downloaded_outputs = original_commit
+        controller.executor.shutdown(wait=False)
+
+print("Confirmed push boundary is persisted before output download.")
