@@ -35,6 +35,7 @@ from .kaggle_protocol import (
 )
 from .kaggle_dashboard import dashboard_summary_text
 from .kaggle_dataset import write_dataset_bundle
+from .kaggle_health import recovery_diagnostic_lines
 from .kaggle_inputs import validate_submission
 from .kaggle_jobs import (
     build_job_config,
@@ -1391,18 +1392,13 @@ class KaggleController:
             except Exception as exc:
                 lines.append(f"❌ Authentification Kaggle: {type(exc).__name__}: {exc}")
 
-        jobs = self.db.list_jobs(1000)
-        waiting_auth = sum(1 for row in jobs if row.get("status") == "waiting_auth")
-        recoverable = sum(1 for row in jobs if recovery_marked(row))
-        remote_preserved = sum(1 for row in jobs if remote_kernel_is_preserved(row))
-        if waiting_auth:
-            lines.append(f"⚠️ {waiting_auth} job(s) attendent l'authentification.")
-        if recoverable:
-            lines.append(f"♻️ {recoverable} job(s) ont des outputs Kaggle récupérables sans recalcul.")
-        if remote_preserved:
-            lines.append(f"🛰️ {remote_preserved} kernel(s) distant(s) conservé(s) pour reprise.")
-        if not waiting_auth and not recoverable and not remote_preserved:
-            lines.append("✅ Aucun job de reprise en attente.")
+        lines.extend(
+            recovery_diagnostic_lines(
+                self.db.list_jobs(1000),
+                recovery_marked=recovery_marked,
+                remote_kernel_is_preserved=remote_kernel_is_preserved,
+            )
+        )
 
         return "\n".join(lines)
 
