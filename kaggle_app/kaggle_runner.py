@@ -1236,7 +1236,8 @@ class KaggleController:
         if job.get("status") not in {"error", "interrupted"}:
             raise ValueError("La récupération manuelle est réservée aux jobs en erreur/interrompus.")
         meta = job.get("meta") or {}
-        if not has_recoverable_outputs(job):
+        submission_pending = submission_confirmation_pending(job)
+        if not submission_pending and not has_recoverable_outputs(job):
             raise ValueError(
                 "Ce job ne possède pas d'outputs Kaggle conservés. Utilise Relancer pour recalculer."
             )
@@ -1247,10 +1248,15 @@ class KaggleController:
             self.db.update_job(job_id, status="recovering", error="")
             target = (
                 self._resume_unconfirmed_submission
-                if submission_confirmation_pending(job)
+                if submission_pending
                 else self._recover_remote_job
             )
             self._futures[job_id] = self.executor.submit(target, job_id)
+        if submission_pending:
+            return (
+                "Vérification de la soumission Kaggle relancée. "
+                "Aucun nouveau push ne sera effectué tant que l'état distant reste ambigu."
+            )
         return "Récupération des outputs Kaggle relancée sans recalcul GPU."
 
     def reconcile_completed_jobs(self) -> tuple[int, int]:
