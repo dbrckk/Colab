@@ -1317,6 +1317,8 @@ with tempfile.TemporaryDirectory() as td:
         "recover-repeat", status="error", kernel_ref="ci-user/completed-kernel",
         meta_json={"recover_outputs_available": True, "failed_phase": "downloading"},
     )
+    original_validate = controller.validate_current_credentials
+    controller.validate_current_credentials = lambda max_age_seconds=300: None
     controller._kernel_status = lambda ref: ("complete", "complete")
     cleanup_calls = []
     controller._cleanup_remote_refs = lambda kernel_ref="", dataset_ref="", force=False: cleanup_calls.append(
@@ -1329,6 +1331,7 @@ with tempfile.TemporaryDirectory() as td:
     assert recovered["meta"]["recover_outputs_available"] is True
     assert recovered["kernel_ref"] == "ci-user/completed-kernel"
     assert not any(call[0] == "ci-user/completed-kernel" for call in cleanup_calls)
+    controller.validate_current_credentials = original_validate
     controller.executor.shutdown(wait=False)
 
 print("Repeated output recovery retention passed.")
