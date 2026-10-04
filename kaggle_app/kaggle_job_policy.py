@@ -4,6 +4,15 @@ from typing import Any
 
 
 TERMINAL_STATES = {"done", "error", "cancelled", "interrupted"}
+DELETE_BLOCKED_STATES = {
+    "queued",
+    "running",
+    "submitting",
+    "recovering",
+    "downloading",
+    "cancel_requested",
+}
+
 ACTIVE_STATES = {
     "preparing",
     "uploading_inputs",
@@ -51,3 +60,9 @@ def can_cancel_locally(
         not kernel_ref
         and (cancelled_before_start or not future_active)
     )
+
+
+def delete_block_reason(job: dict[str, Any]) -> str | None:
+    if str(job.get("status") or "") in DELETE_BLOCKED_STATES:
+        return "Annule d'abord le job actif."
+    return None
