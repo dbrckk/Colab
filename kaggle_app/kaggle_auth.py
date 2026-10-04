@@ -106,3 +106,52 @@ def write_credential_env(
             tmp_env.unlink(missing_ok=True)
         except OSError:
             pass
+
+
+def snapshot_credential_env() -> dict[str, str | None]:
+    return {key: os.environ.get(key) for key in CREDENTIAL_KEYS}
+
+
+def restore_credential_env(snapshot: dict[str, str | None]) -> None:
+    for key in CREDENTIAL_KEYS:
+        value = snapshot.get(key)
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+
+
+def apply_credential_env(
+    *,
+    username: str,
+    api_token: str,
+    legacy_key: str,
+) -> None:
+    os.environ["KAGGLE_USERNAME"] = username
+    if api_token:
+        os.environ["KAGGLE_API_TOKEN"] = api_token
+        os.environ.pop("KAGGLE_KEY", None)
+    else:
+        os.environ["KAGGLE_KEY"] = legacy_key
+        os.environ.pop("KAGGLE_API_TOKEN", None)
+
+
+def credential_save_message(
+    *,
+    api_token: str,
+    persist: bool,
+    resumed: int,
+    recovered: int,
+) -> str:
+    mode = "API token" if api_token else "legacy key"
+    parts: list[str] = []
+    if resumed:
+        parts.append(f"{resumed} job(s) en attente relancé(s)")
+    if recovered:
+        parts.append(f"{recovered} récupération(s) d'output relancée(s)")
+    suffix = (" " + " • ".join(parts) + ".") if parts else ""
+    return (
+        f"Identifiants Kaggle validés ({mode})"
+        + (" et sauvegardés dans le stockage privé configuré." if persist else ".")
+        + suffix
+    )
