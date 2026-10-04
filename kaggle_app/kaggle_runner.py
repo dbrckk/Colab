@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import SETTINGS, Settings
+from .kaggle_artifacts import stale_artifact_ids
 from .db import JobDB
 from .kaggle_auth import (
     apply_credential_env,
@@ -1182,15 +1183,9 @@ class KaggleController:
         return removed
 
     def reconcile_artifacts(self) -> tuple[int, int]:
-        stale_ids: list[int] = []
-        checked = 0
-        for row in self.db.recent_artifacts(None, 100000):
-            checked += 1
-            path = row.get("path") or ""
-            if not path or not Path(path).is_file():
-                stale_ids.append(int(row["id"]))
-        removed = self.db.delete_artifacts_by_ids(stale_ids)
-        return checked, removed
+        rows = self.db.recent_artifacts(None, 100000)
+        removed = self.db.delete_artifacts_by_ids(stale_artifact_ids(rows))
+        return len(rows), removed
 
     def cleanup_storage(self, export_max_age_days: int = 14) -> str:
         now = time.time()
