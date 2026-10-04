@@ -268,8 +268,23 @@ def _refresh(job_id):
 
     status = f"{j['status']}\nKaggle: {j['kernel_ref'] or '—'}"
     job_meta = j.get("meta") or {}
+    submission_pending = bool(
+        j.get("kernel_ref")
+        and job_meta.get("remote_submission_confirmed") is False
+    )
+    if submission_pending:
+        status += (
+            "\nSoumission Kaggle à confirmer : le contrôleur doit d'abord vérifier si "
+            "le kernel distant existe. Aucun nouveau push ne sera effectué tant que "
+            "l'état reste ambigu."
+        )
     if j.get("status") == "waiting_auth":
-        if j.get("kernel_ref"):
+        if submission_pending:
+            status += (
+                "\nAuthentification requise pour vérifier cette soumission distante. "
+                "Si Kaggle confirme que le kernel est absent, le job sera rejoué proprement."
+            )
+        elif j.get("kernel_ref"):
             status += (
                 "\nAuthentification requise : le kernel distant est conservé. "
                 "Enregistre des identifiants Kaggle valides pour reprendre sans recalcul."
