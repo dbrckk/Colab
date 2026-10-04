@@ -237,34 +237,11 @@ class KaggleController:
                 _, result_manifest = self._download_validated_outputs(
                     job, kernel_ref, download
                 )
-                artifacts = import_outputs(job_id, download, self.settings.storage_root)
-                current = self.db.get_job(job_id) or job
-                current_meta = current.get("meta") or {}
-                if result_manifest:
-                    self.db.update_job(
-                        job_id,
-                        meta_json={**current_meta, "result_manifest": result_manifest},
-                    )
-                existing = {a["path"] for a in self.db.artifacts(job_id)}
-                for path, kind in artifacts:
-                    if str(path) not in existing:
-                        self.db.add_artifact(job_id, str(path), kind)
-                if not artifacts and not self.db.artifacts(job_id):
-                    raise RuntimeError("Aucun output Kaggle récupérable.")
-                final_meta = (self.db.get_job(job_id) or job).get("meta") or {}
-                self.db.update_job(
-                    job_id,
-                    status="done",
-                    error="",
-                    meta_json={
-                        **final_meta,
-                        "recover_outputs_available": False,
-                        "failed_phase": "",
-                        "auto_recovery_attempts": 0,
-                    },
+                self._commit_downloaded_outputs(
+                    job,
+                    download,
+                    result_manifest,
                 )
-                self._storage_cache["ts"] = 0.0
-                self._cleanup_inputs(job_id)
         except JobCancelled:
             self.db.update_job(job_id, status="cancelled", error="")
         except Exception as exc:
@@ -961,6 +938,43 @@ class KaggleController:
             f"Outputs Kaggle invalides après {total} tentative(s): {last_exc}"
         ) from last_exc
 
+    def _commit_downloaded_outputs(
+        self,
+        job: dict[str, Any],
+        download: Path,
+        result_manifest: dict[str, Any],
+    ) -> list[tuple[Path, str]]:
+        job_id = job["id"]
+        artifacts = import_outputs(job_id, download, self.settings.storage_root)
+
+        current = self.db.get_job(job_id) or job
+        current_meta = current.get("meta") or {}
+        if result_manifest:
+            current_meta = {**current_meta, "result_manifest": result_manifest}
+
+        existing = {a["path"] for a in self.db.artifacts(job_id)}
+        for path, kind in artifacts:
+            if str(path) not in existing:
+                self.db.add_artifact(job_id, str(path), kind)
+
+        if not artifacts and not self.db.artifacts(job_id):
+            raise RuntimeError("Aucun output Kaggle récupérable.")
+
+        self.db.update_job(
+            job_id,
+            status="done",
+            error="",
+            meta_json={
+                **current_meta,
+                "recover_outputs_available": False,
+                "failed_phase": "",
+                "auto_recovery_attempts": 0,
+            },
+        )
+        self._storage_cache["ts"] = 0.0
+        self._cleanup_inputs(job_id)
+        return artifacts
+
     def _kernel_status(self, kernel_ref: str) -> tuple[str, str]:
         output = self._run(["kernels", "status", kernel_ref], timeout=120)
         return parse_kernel_status(output), output
@@ -1058,19 +1072,11 @@ class KaggleController:
                 _, result_manifest = self._download_validated_outputs(
                     job, kernel_ref, download
                 )
-                artifacts = import_outputs(job_id, download, self.settings.storage_root)
-                current = self.db.get_job(job_id) or job
-                current_meta = current.get("meta") or {}
-                if result_manifest:
-                    self.db.update_job(
-                        job_id,
-                        meta_json={**current_meta, "result_manifest": result_manifest},
-                    )
-                for path, kind in artifacts:
-                    self.db.add_artifact(job_id, str(path), kind)
-                self.db.update_job(job_id, status="done")
-                self._storage_cache["ts"] = 0.0
-                self._cleanup_inputs(job_id)
+                self._commit_downloaded_outputs(
+                    job,
+                    download,
+                    result_manifest,
+                )
         except JobCancelled:
             self.db.update_job(job_id, status="cancelled", error="")
         except Exception as exc:
