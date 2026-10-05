@@ -24,7 +24,7 @@ Cette interface transforme le repo en **contrôleur de jobs Kaggle**.
    - `video_faceswap` : visage source + vidéo cible → FaceFusion Ultra sur Kaggle.
 4. L'UI :
    - crée un job local ;
-   - crée un dataset Kaggle privé contenant la config et les entrées ;
+   - crée un dataset Kaggle privé uniquement lorsqu'un fichier source doit être transféré ;
    - crée/lance un kernel Kaggle privé GPU ;
    - surveille son état ;
    - télécharge les outputs ;
@@ -60,7 +60,12 @@ QWEN_KAGGLE_SHARE=true
 
 ## Dépendances
 
-Le launcher installe automatiquement Gradio et le CLI Kaggle s'ils manquent. Tu peux aussi installer manuellement :
+Le launcher installe automatiquement les versions compatibles de Gradio et du CLI Kaggle s'ils manquent ou si une version majeure non testée est présente. La release stable utilise les plages :
+
+- `gradio>=6.0,<7.0`
+- `kaggle>=2.2.3,<3.0`
+
+Tu peux aussi installer manuellement :
 
 ```bash
 pip install -r requirements-kaggle-ui.txt
@@ -114,3 +119,30 @@ La génération par lot ne crée plus un kernel Kaggle par prompt. Un lot de jus
 ## Génération texte → image accélérée
 
 Un job `image` ou `image_batch` sans fichier source **ne crée plus de dataset Kaggle temporaire**. La configuration est injectée directement dans le notebook privé généré. Les datasets privés temporaires ne sont créés que lorsque des fichiers doivent réellement être transférés, par exemple pour `image_edit` ou `video_faceswap`.
+
+
+## Reprise après coupure ou redémarrage
+
+Le contrôleur conserve l'état des jobs dans SQLite. En cas de coupure Colab, réseau ou Kaggle :
+
+- un kernel déjà confirmé est repris sans recalcul lorsque c'est possible ;
+- les outputs terminés peuvent être récupérés sans relancer le GPU ;
+- une expiration des identifiants place le job en attente d'authentification au lieu de perdre son état ;
+- une soumission interrompue autour de `kernels push` est d'abord vérifiée par son identifiant exact ;
+- si Kaggle confirme que le kernel n'existe pas, le job peut être rejoué proprement ;
+- si l'état distant est ambigu, aucun second push n'est lancé automatiquement afin d'éviter un double calcul.
+
+Le bouton de récupération peut également relancer cette vérification sans effectuer de nouveau push tant que l'existence distante n'est pas tranchée.
+
+## Validation de la release
+
+La branche `main` est protégée fonctionnellement par le workflow **Validate Qwen Studio**, qui vérifie notamment :
+
+- compilation de tous les modules Python ;
+- modules notebook/runtime ;
+- smoke tests Gradio ;
+- contrôleur Kaggle et reprise après incident ;
+- authentification et persistance des secrets ;
+- staging dataset, kernel, outputs et manifestes SHA-256 ;
+- CLI Kaggle réel et ses options attendues ;
+- UI du contrôleur et launcher.
