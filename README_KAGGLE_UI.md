@@ -2,7 +2,7 @@
 
 ## Lancement recommandé sur smartphone
 
-Ouvre `Qwen_Kaggle_Studio_Controller.ipynb` dans Google Colab et exécute son unique cellule. Le notebook lit automatiquement les **Secrets Colab** `KAGGLE_USERNAME` et `KAGGLE_API_TOKEN` s'ils existent. Le contrôleur monte Google Drive, lance Gradio et utilise Kaggle uniquement pour les tâches GPU. Les résultats sont conservés dans `MyDrive/QwenKaggleStudio/`.
+Ouvre `Qwen_Kaggle_Studio_Controller.ipynb` dans Google Colab et exécute son unique cellule. Le notebook utilise la branche de release **`stable/qwen-kaggle-v1`** afin qu'une modification future de `main` ne casse pas une installation stable. Il lit automatiquement les **Secrets Colab** `KAGGLE_USERNAME` et `KAGGLE_API_TOKEN` s'ils existent. Le contrôleur monte Google Drive, lance Gradio et utilise Kaggle uniquement pour les tâches GPU. Les résultats sont conservés dans `MyDrive/QwenKaggleStudio/`.
 
 
 Cette interface transforme le repo en **contrôleur de jobs Kaggle**.
@@ -146,3 +146,12 @@ La branche `main` est protégée fonctionnellement par le workflow **Validate Qw
 - staging dataset, kernel, outputs et manifestes SHA-256 ;
 - CLI Kaggle réel et ses options attendues ;
 - UI du contrôleur et launcher.
+
+
+## Release stable
+
+La version destinée à l'utilisation normale est figée sur la branche :
+
+`stable/qwen-kaggle-v1`
+
+Le notebook Colab officiel récupère cette branche explicitement. La branche `main` peut donc évoluer ultérieurement sans modifier silencieusement le comportement d'une session Colab stable. Une nouvelle release stable doit être volontairement promue après passage complet de la CI.
