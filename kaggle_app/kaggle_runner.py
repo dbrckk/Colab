@@ -574,14 +574,14 @@ class KaggleController:
             current = tuple((nums + [0, 0, 0])[:3])
         except (PackageNotFoundError, ValueError):
             pass
-        if exe and current >= (2, 2, 3):
+        if exe and (2, 2, 3) <= current < (3, 0, 0):
             return exe
 
         subprocess.run(
             [
                 sys.executable, "-m", "pip", "install",
                 "--disable-pip-version-check", "--quiet", "--upgrade",
-                "kaggle>=2.2.3",
+                "kaggle>=2.2.3,<3.0",
             ],
             check=True,
             timeout=300,
