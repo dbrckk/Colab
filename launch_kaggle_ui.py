@@ -32,10 +32,12 @@ def _version_tuple(package: str) -> tuple[int, int, int]:
 
 def ensure_dependencies() -> None:
     missing = []
-    if _version_tuple("gradio") < (6, 0, 0):
-        missing.append("gradio>=6.0")
-    if _version_tuple("kaggle") < (2, 2, 3) or shutil.which("kaggle") is None:
-        missing.append("kaggle>=2.2.3")
+    gradio_version = _version_tuple("gradio")
+    kaggle_version = _version_tuple("kaggle")
+    if not ((6, 0, 0) <= gradio_version < (7, 0, 0)):
+        missing.append("gradio>=6.0,<7.0")
+    if not ((2, 2, 3) <= kaggle_version < (3, 0, 0)) or shutil.which("kaggle") is None:
+        missing.append("kaggle>=2.2.3,<3.0")
     if missing:
         subprocess.run(
             [
