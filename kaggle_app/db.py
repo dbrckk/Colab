@@ -5,7 +5,10 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .remote_storage import RemoteStorage
 
 _LOCK = threading.RLock()
 
@@ -42,11 +45,20 @@ def _decode_job_row(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
     return item
 
 class JobDB:
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, remote_store: RemoteStorage | None = None):
         self.path = Path(path)
+        self.remote_store = remote_store
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.recovered_corrupt_path: Path | None = None
+        if self.remote_store is not None:
+            # Restore BEFORE schema migrations and before any job is resumed.
+            self.remote_store.restore_database(self.path)
         self._initialize_database()
+        self._persist()
+
+    def _persist(self) -> None:
+        if self.remote_store is not None:
+            self.remote_store.save_database(self.path)
 
     def _initialize_database(self) -> None:
         try:
@@ -113,6 +125,7 @@ class JobDB:
                 (job_id, task, prompt or "", "queued", now, now, json.dumps(meta, ensure_ascii=False)),
             )
             con.commit()
+            self._persist()
 
     def update_job(self, job_id: str, **fields: Any) -> None:
         allowed = {"status", "kernel_ref", "error", "meta_json", "prompt", "task"}
@@ -124,6 +137,7 @@ class JobDB:
         with _LOCK, self._conn() as con:
             con.execute(f"UPDATE jobs SET {sql} WHERE id=?", (*updates.values(), job_id))
             con.commit()
+            self._persist()
 
     def get_job(self, job_id: str) -> dict[str, Any] | None:
         with _LOCK, self._conn() as con:
@@ -144,6 +158,7 @@ class JobDB:
                 (job_id, path, kind, time.time()),
             )
             con.commit()
+            self._persist()
 
     def artifacts(self, job_id: str) -> list[dict[str, Any]]:
         with _LOCK, self._conn() as con:
@@ -158,6 +173,7 @@ class JobDB:
             con.execute("DELETE FROM artifacts WHERE job_id=?", (job_id,))
             con.execute("DELETE FROM jobs WHERE id=?", (job_id,))
             con.commit()
+            self._persist()
 
 
     def recent_artifacts(self, kind: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
@@ -188,8 +204,10 @@ class JobDB:
                 clean,
             )
             con.commit()
+            self._persist()
             return int(cur.rowcount or 0)
 
     def vacuum(self) -> None:
         with _LOCK, self._conn() as con:
             con.execute("VACUUM")
+            self._persist()
