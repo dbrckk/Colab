@@ -80,6 +80,7 @@ from .kaggle_recovery import (
     submission_confirmation_pending,
 )
 from .storage import import_outputs, scan_outputs
+from .remote_storage import RemoteStorage, RemoteStorageError
 
 # Backward-compatible aliases kept for existing tests/importers while the
 # implementation lives in kaggle_protocol.py.
@@ -96,7 +97,10 @@ class RemoteKernelFailed(RuntimeError):
 class KaggleController:
     def __init__(self, settings: Settings = SETTINGS):
         self.settings = settings
-        self.db = JobDB(settings.db_path)
+        self.remote_store = RemoteStorage.from_env()
+        if self.remote_store is not None:
+            self.remote_store.ensure_private_bucket()
+        self.db = JobDB(settings.db_path, remote_store=self.remote_store)
         # Kaggle GPU sessions are intentionally serialized.
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="kaggle-job")
         self._futures: dict[str, Any] = {}
@@ -117,6 +121,14 @@ class KaggleController:
             meta = row.get("meta") or {}
 
             if action == "resume_local":
+                try:
+                    self._restore_required_inputs(row)
+                except Exception as exc:
+                    self.db.update_job(
+                        job_id, status="interrupted",
+                        error=f"Restauration des entrées distantes impossible: {exc}",
+                    )
+                    continue
                 dataset_ref = meta.get("dataset_ref") or ""
                 if dataset_ref:
                     try:
@@ -745,7 +757,34 @@ class KaggleController:
         return ensure_input_store(self.settings.storage_root)
 
     def _persist_input(self, job_id: str, source: str | None, stem: str) -> str:
-        return persist_input_file(self.settings.storage_root, source)
+        persisted = persist_input_file(self.settings.storage_root, source)
+        if persisted and self.remote_store is not None:
+            self.remote_store.save_file(Path(persisted), self.settings.storage_root)
+        return persisted
+
+    def _restore_required_inputs(self, job: dict[str, Any]) -> None:
+        if self.remote_store is None:
+            return
+        meta = job.get("meta") or {}
+        for field in ("source_image", "target_video"):
+            value = meta.get(field)
+            if value and not Path(value).is_file():
+                if not self.remote_store.restore_file(
+                    Path(value), self.settings.storage_root
+                ):
+                    raise RemoteStorageError(
+                        f"Entrée {field} absente de la sauvegarde persistante."
+                    )
+
+    def _restore_artifacts(self, artifacts: list[dict[str, Any]]) -> None:
+        if self.remote_store is None:
+            return
+        for artifact in artifacts:
+            path = artifact.get("path")
+            if path and not Path(path).is_file():
+                self.remote_store.restore_file(
+                    Path(path), self.settings.storage_root
+                )
 
     def _referenced_input_paths(self) -> set[str]:
         refs: set[str] = set()
@@ -1016,6 +1055,11 @@ class KaggleController:
     ) -> list[tuple[Path, str]]:
         job_id = job["id"]
         artifacts = import_outputs(job_id, download, self.settings.storage_root)
+        if self.remote_store is not None:
+            # Publish every media object BEFORE committing its database row or
+            # marking the Kaggle job done. Partial uploads have no manifest.
+            for media_path, _kind in artifacts:
+                self.remote_store.save_file(media_path, self.settings.storage_root)
 
         current = self.db.get_job(job_id) or job
         current_meta = current.get("meta") or {}
@@ -1266,7 +1310,9 @@ class KaggleController:
             if row.get("status") != "done":
                 continue
             checked += 1
-            if has_valid_local_media(self.db.artifacts(row["id"])):
+            artifacts = self.db.artifacts(row["id"])
+            self._restore_artifacts(artifacts)
+            if has_valid_local_media(artifacts):
                 continue
 
             kernel_ref = row.get("kernel_ref") or ""
@@ -1337,6 +1383,7 @@ class KaggleController:
 
     def reconcile_artifacts(self) -> tuple[int, int]:
         rows = self.db.recent_artifacts(None, 100000)
+        self._restore_artifacts(rows)
         removed = self.db.delete_artifacts_by_ids(stale_artifact_ids(rows))
         return len(rows), removed
 
@@ -1533,6 +1580,7 @@ class KaggleController:
                 meta.get("seed", -1),
                 meta.get("aspect", "1:1"),
             )[0]
+        self._restore_required_inputs(old)
         return self.submit(
             old.get("task") or "image",
             old.get("prompt") or "",
@@ -1549,6 +1597,7 @@ class KaggleController:
         job = self.db.get_job(job_id)
         if not job:
             raise ValueError("Job introuvable.")
+        self._restore_artifacts(self.db.artifacts(job_id))
         return build_job_archive(
             export_root=self.settings.storage_root / "_exports",
             job_id=job_id,
@@ -1575,6 +1624,11 @@ class KaggleController:
                 # Local deletion must remain possible if Kaggle is offline or
                 # credentials have expired; remote cleanup is best-effort.
                 pass
+        if self.remote_store is not None:
+            for artifact in self.db.artifacts(job_id):
+                self.remote_store.remove_file(
+                    Path(artifact["path"]), self.settings.storage_root
+                )
         shutil.rmtree(self.settings.storage_root / job_id, ignore_errors=True)
         self._cleanup_inputs(job_id, force=True)
         try:
@@ -1590,10 +1644,17 @@ class KaggleController:
         return self.db.get_job(job_id)
 
     def artifacts(self, job_id: str):
-        return self.db.artifacts(job_id)
+        items = self.db.artifacts(job_id)
+        self._restore_artifacts(items)
+        return items
 
-    def recent_artifacts(self, kind: str | None = None, limit: int = 100):
-        return self.db.recent_artifacts(kind, limit)
+    def recent_artifacts(
+        self, kind: str | None = None, limit: int = 100, restore: bool = False
+    ):
+        items = self.db.recent_artifacts(kind, limit)
+        if restore:
+            self._restore_artifacts(items)
+        return items
 
     def jobs(self, limit: int = 100):
         return self.db.list_jobs(limit)
