@@ -343,11 +343,28 @@ def _refresh(job_id):
     return status, images, (videos[0] if videos else None), files, _jobs_table()
 
 def build_ui():
+    hosted = bool(os.getenv("PORT"))
     with gr.Blocks(title="Qwen Kaggle Studio") as demo:
         gr.HTML(
             "<div class='hero'><h1>Qwen Kaggle Studio</h1>"
-            "<p>Crée, modifie et traite tes médias sur Kaggle GPU. Les résultats reviennent automatiquement dans ta bibliothèque persistante.</p></div>"
+            "<p>Crée, modifie et traite tes médias sur Kaggle GPU. "
+            + (
+                "Télécharge les résultats dans ta bibliothèque locale tant que la session est active."
+                if hosted
+                else "Les résultats reviennent automatiquement dans ta bibliothèque persistante."
+            )
+            + "</p></div>"
         )
+        if hosted:
+            gr.Markdown(
+                "**Hébergement gratuit — stockage temporaire.** "
+                "L'adresse du site est fixe, mais les créations, l'historique et les "
+                "identifiants enregistrés sur le serveur peuvent disparaître "
+                "après une mise en veille ou un redémarrage. "
+                "**Télécharge tes fichiers dès qu'ils sont prêts.** "
+                "Pour conserver les identifiants Kaggle entre redémarrages, "
+                "configure-les dans les variables d'environnement Render."
+            )
         dashboard = gr.Markdown(_dashboard())
 
         with gr.Tab("✨ Générer"):
