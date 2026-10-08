@@ -6,7 +6,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 from kaggle_app.db import JobDB
 from kaggle_app.remote_storage import (
@@ -50,6 +50,20 @@ def expect_error(fn, exception=RemoteStorageError) -> None:
     else:
         raise AssertionError(f"Expected {exception.__name__}")
 
+
+# The newer sb_secret_* key must never be sent as a JWT Bearer credential.
+response = Mock(status_code=200, content=b"{}")
+with patch("kaggle_app.remote_storage.requests.request", return_value=response) as request:
+    modern = RemoteStorage("https://test.supabase.co", "sb_secret_test")
+    assert modern._request("GET", "bucket/private") == b"{}"
+    headers = request.call_args.kwargs["headers"]
+    assert headers["apikey"] == "sb_secret_test"
+    assert "Authorization" not in headers
+
+with patch("kaggle_app.remote_storage.requests.request", return_value=response) as request:
+    legacy = RemoteStorage("https://test.supabase.co", "legacy-jwt")
+    assert legacy._request("GET", "bucket/private") == b"{}"
+    assert request.call_args.kwargs["headers"]["Authorization"] == "Bearer legacy-jwt"
 
 with patch.dict(os.environ, {
     "QWEN_SUPABASE_URL": "", "QWEN_SUPABASE_SERVICE_ROLE_KEY": "",
