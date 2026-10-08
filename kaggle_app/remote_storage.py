@@ -64,8 +64,12 @@ class RemoteStorage:
     ) -> bytes | None:
         base_headers = {
             "apikey": self.service_key,
-            "Authorization": f"Bearer {self.service_key}",
+            "Cache-Control": "no-cache",
         }
+        # Modern sb_secret_* API keys are not JWTs. Supabase expects them
+        # in apikey, whereas legacy service_role JWTs can be used as Bearer.
+        if not self.service_key.startswith("sb_secret_"):
+            base_headers["Authorization"] = f"Bearer {self.service_key}"
         if data is not None:
             base_headers["Content-Type"] = content_type
         if headers:
