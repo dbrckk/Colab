@@ -807,6 +807,10 @@ class KaggleController:
             referenced_paths=self._referenced_input_paths(),
         ):
             try:
+                if self.remote_store is not None:
+                    # Once no job references an input, remove the remote copy
+                    # before deleting its local cache to respect user deletion.
+                    self.remote_store.remove_file(path, self.settings.storage_root)
                 reclaimed += path.stat().st_size
                 path.unlink()
                 removed += 1
