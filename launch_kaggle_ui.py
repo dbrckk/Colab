@@ -57,18 +57,23 @@ if __name__ == "__main__":
     demo = build_ui()
     ui_user = os.getenv("QWEN_UI_USER", "qwen")
     ui_password = os.getenv("QWEN_UI_PASSWORD") or secrets.token_urlsafe(10)
-    if SETTINGS.share_gradio:
+    hosted = bool(os.getenv("PORT"))
+    if hosted and not os.getenv("QWEN_UI_PASSWORD"):
+        raise RuntimeError("QWEN_UI_PASSWORD est obligatoire pour un site public.")
+    if SETTINGS.share_gradio or hosted:
         print("🔐 Connexion Gradio")
         print("Utilisateur :", ui_user)
         print("Mot de passe :", ui_password)
     demo.queue(default_concurrency_limit=8)
     demo.launch(
-        share=SETTINGS.share_gradio,
+        share=SETTINGS.share_gradio and not hosted,
+        server_name="0.0.0.0" if hosted else None,
+        server_port=int(os.getenv("PORT", "7860")),
         inline=False,
         show_error=True,
         prevent_thread_lock=False,
         allowed_paths=[str(SETTINGS.storage_root)],
         theme=gr.themes.Soft(),
         css=CSS,
-        auth=(ui_user, ui_password) if SETTINGS.share_gradio else None,
+        auth=(ui_user, ui_password) if (SETTINGS.share_gradio or hosted) else None,
     )
