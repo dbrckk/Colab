@@ -68,17 +68,17 @@ def _dashboard():
     except Exception as e:
         return f"Diagnostic tableau de bord indisponible: {type(e).__name__}: {e}"
 
-def _recent_videos(limit=30):
+def _recent_videos(limit=30, restore=False):
     items = []
-    for a in controller.recent_artifacts("video", int(limit)):
+    for a in controller.recent_artifacts("video", int(limit), restore=restore):
         path = a.get("path")
         if path and Path(path).exists():
             items.append(path)
     return items
 
-def _recent_images(limit=60):
+def _recent_images(limit=60, restore=False):
     items = []
-    for a in controller.recent_artifacts("image", int(limit)):
+    for a in controller.recent_artifacts("image", int(limit), restore=restore):
         path = a.get("path")
         if path and Path(path).exists():
             caption = (a.get("prompt") or a.get("task") or a.get("job_id") or "")[:100]
@@ -190,6 +190,7 @@ def _load_job_to_form(job_id):
     j = controller.job(job_id)
     if not j:
         raise gr.Error("Job introuvable.")
+    controller._restore_required_inputs(j)
     meta = j.get("meta") or {}
     source = meta.get("source_image") or None
     target = meta.get("target_video") or None
@@ -344,18 +345,32 @@ def _refresh(job_id):
 
 def build_ui():
     hosted = bool(os.getenv("PORT"))
+    persistent = controller.remote_store is not None
     with gr.Blocks(title="Qwen Kaggle Studio") as demo:
         gr.HTML(
             "<div class='hero'><h1>Qwen Kaggle Studio</h1>"
             "<p>Crée, modifie et traite tes médias sur Kaggle GPU. "
             + (
-                "Télécharge les résultats dans ta bibliothèque locale tant que la session est active."
-                if hosted
-                else "Les résultats reviennent automatiquement dans ta bibliothèque persistante."
+                "Les fichiers et les jobs sont sauvegardés dans ton bucket privé."
+                if persistent
+                else (
+                    "Télécharge les résultats tant que la session est active."
+                    if hosted else
+                    "Les résultats reviennent automatiquement dans ta bibliothèque persistante."
+                )
             )
             + "</p></div>"
         )
-        if hosted:
+        if hosted and persistent:
+            gr.Markdown(
+                "**Stockage externe privé actif (Supabase).** "
+                "La base SQLite, les images, les vidéos et les sources sont "
+                "sauvegardées dans un bucket privé et restaurées au besoin. "
+                "La galerie est rechargée à la demande via **Actualiser**. "
+                "Les quotas et interruptions des offres gratuites restent applicables. "
+                "Configure tes identifiants Kaggle dans les secrets d'environnement Render."
+            )
+        elif hosted:
             gr.Markdown(
                 "**Hébergement gratuit — stockage temporaire.** "
                 "L'adresse du site est fixe, mais les créations, l'historique et les "
@@ -483,15 +498,26 @@ def build_ui():
             else:
                 ready = "❌ Kaggle non configuré"
             gr.Markdown(
-                "Les identifiants restent dans le processus local. "
-                "Si tu coches la sauvegarde, ils sont écrits dans .env.local, ignoré par Git."
+                (
+                    "En hébergement Render, configure KAGGLE_USERNAME et "
+                    "KAGGLE_API_TOKEN dans les variables d'environnement du service. "
+                    "Le formulaire ne conserve les secrets que jusqu'au prochain redémarrage."
+                    if hosted else
+                    "Les identifiants restent dans le processus local. "
+                    "Si tu coches la sauvegarde, ils sont écrits dans .env.local, ignoré par Git."
+                )
             )
             kaggle_status = gr.Textbox(value=ready, label="État", interactive=False)
             username = gr.Textbox(value=os.getenv("KAGGLE_USERNAME", ""), label="KAGGLE_USERNAME")
             api_token = gr.Textbox(value="", label="KAGGLE_API_TOKEN (recommandé)", type="password")
             with gr.Accordion("Ancienne clé Kaggle (optionnel)", open=False):
                 legacy_key = gr.Textbox(value="", label="KAGGLE_KEY legacy", type="password")
-            persist = gr.Checkbox(value=True, label="Sauvegarder dans le stockage privé configuré")
+            persist = gr.Checkbox(
+                value=not hosted,
+                label=("Sur Render, gérer les secrets via Environment" if hosted else
+                       "Sauvegarder les identifiants dans .env.local"),
+                interactive=not hosted,
+            )
             with gr.Row():
                 save = gr.Button("Enregistrer et tester Kaggle", variant="primary")
                 health_btn = gr.Button("🩺 Diagnostic complet")
@@ -523,8 +549,14 @@ def build_ui():
             [job_status_filter, job_task_filter, job_search],
             [jobs],
         )
-        recent_reload.click(_recent_images, [recent_limit], [recent_gallery])
-        recent_video_reload.click(_recent_videos, [recent_video_limit], [recent_videos])
+        recent_reload.click(
+            lambda n: _recent_images(n, restore=True),
+            [recent_limit], [recent_gallery],
+        )
+        recent_video_reload.click(
+            lambda n: _recent_videos(n, restore=True),
+            [recent_video_limit], [recent_videos],
+        )
         open_job.click(_refresh, [lookup], [lib_status, lib_gallery, lib_video, lib_files, jobs])
         load_form_btn.click(
             _load_job_to_form,
