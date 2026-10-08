@@ -61,9 +61,12 @@ if __name__ == "__main__":
     if hosted and not os.getenv("QWEN_UI_PASSWORD"):
         raise RuntimeError("QWEN_UI_PASSWORD est obligatoire pour un site public.")
     if SETTINGS.share_gradio or hosted:
-        print("🔐 Connexion Gradio")
+        print("🔐 Authentification Gradio activée.")
         print("Utilisateur :", ui_user)
-        print("Mot de passe :", ui_password)
+        if not hosted:
+            # Temporary Colab share links use a generated password; show it
+            # only there, never leak a hosted service secret into build logs.
+            print("Mot de passe :", ui_password)
     demo.queue(default_concurrency_limit=8)
     demo.launch(
         share=SETTINGS.share_gradio and not hosted,
