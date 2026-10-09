@@ -26,6 +26,9 @@ class FakeStore(RemoteStorage):
         self.objects[key] = bytes(content)
 
     def object_remove(self, keys: list[str]) -> None:
+        if getattr(self, "fail_remove_once", False):
+            self.fail_remove_once = False
+            raise RuntimeError("Simulated Supabase delete outage")
         for key in keys:
             self.objects.pop(key, None)
 
@@ -80,14 +83,29 @@ with tempfile.TemporaryDirectory() as td:
     restored._restore_required_inputs(restored.db.get_job("job1"))
     assert Path(saved_source).read_bytes() == b"fake-image-input-contents"
 
+    # Delete after another simulated loss of the local disk. The remote
+    # source still needs to be removed even if no local input cache exists.
+    media.unlink()
+    Path(saved_source).unlink()
+    fake.fail_remove_once = True
     msg = restored.delete_local_job("job1")
-    assert "supprimé" in msg
+    assert "supprimé" in msg and "en attente" in msg
     assert restored.db.get_job("job1") is None
     assert not media.exists()
+    assert restored.db.pending_remote_deletes(), "Failed remote deletion lost its tombstone"
+
+    # Next cold start must finish the private remote deletion and preserve
+    # the deleted state, without resurrecting stale gallery records.
+    db.unlink()
+    with patch("kaggle_app.kaggle_runner.RemoteStorage.from_env", return_value=fake):
+        after_delete = KaggleController(settings)
+    assert after_delete.db.get_job("job1") is None
+    assert after_delete.db.pending_remote_deletes() == []
     assert fake._manifest("job1/image.png") is None
     assert fake._manifest("_input_store/" + Path(saved_source).name) is None
 
     app.executor.shutdown(wait=True)
     restored.executor.shutdown(wait=True)
+    after_delete.executor.shutdown(wait=True)
 
 print("Controller remote-persistence integration smoke passed.")
