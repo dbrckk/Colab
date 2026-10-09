@@ -127,11 +127,12 @@ with tempfile.TemporaryDirectory() as tmp:
     assert second.get_job("job1")["status"] == "done"
     assert second.get_job("job1")["meta"]["seed"] == 5
 
-    storage.max_bytes = 64 * 1024 * 1024
-    # Test quota on a file larger than available bytes, without actually
-    # uploading a large media file.
+    # A full Neon free-tier quota must fail explicitly rather than report
+    # that the bytes were saved.
     current = sum(map(len, storage.objects.values()))
-    storage.max_bytes = max(64 * 1024 * 1024, current + 1)
+    storage.max_bytes = current + 1
+    must_error(lambda: storage.object_put("too-large", b"ab", "text/plain"))
+    assert storage.object_get("too-large") is None
     assert storage.object_get("not-found") is None
     assert storage._key("x") == "qwen-studio-private/x"
     must_error(lambda: storage._key("../escape"))
