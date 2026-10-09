@@ -230,11 +230,19 @@ class RemoteStorage:
 
     def restore_file(self, path: Path, root: Path) -> bool:
         relative = self._relative(path, root)
-        if path.exists() and path.is_file() and path.stat().st_size > 0:
-            return True
         manifest = self._manifest(relative)
         if manifest is None:
-            return False
+            # A local-only file may still be awaiting its first upload.
+            return path.is_file() and path.stat().st_size > 0
+        if path.is_file() and path.stat().st_size == manifest["size"]:
+            with path.open("rb") as source:
+                digest = hashlib.sha256()
+                for block in iter(lambda: source.read(CHUNK_SIZE), b""):
+                    digest.update(block)
+            if digest.hexdigest() == manifest["sha256"]:
+                return True
+        # A truncated or corrupted local cache must never be mistaken for
+        # an already-restored object. Replace it only after full verification.
         path.parent.mkdir(parents=True, exist_ok=True)
         fd, name = tempfile.mkstemp(prefix=".restore-", dir=str(path.parent))
         os.close(fd)
