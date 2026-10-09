@@ -108,6 +108,8 @@ class KaggleController:
         self._lock = threading.RLock()
         self._storage_cache = {"ts": 0.0, "bytes": 0}
         self._auth_cache = {"fingerprint": "", "ts": 0.0}
+        # Finish deletions that were journaled before a previous shutdown.
+        self._purge_pending_remote_deletes()
         self._recover_persisted_jobs()
 
     def _recover_persisted_jobs(self) -> None:
@@ -786,6 +788,22 @@ class KaggleController:
                     Path(path), self.settings.storage_root
                 )
 
+    def _purge_pending_remote_deletes(self) -> tuple[int, int]:
+        if self.remote_store is None:
+            return 0, 0
+        succeeded = 0
+        failed = 0
+        for path in self.db.pending_remote_deletes(1000):
+            try:
+                self.remote_store.remove_file(Path(path), self.settings.storage_root)
+                self.db.complete_remote_delete(path)
+                succeeded += 1
+            except Exception:
+                # The journal remains durable and can be retried after a
+                # storage outage; never restore a deleted job from the cloud.
+                failed += 1
+        return succeeded, failed
+
     def _referenced_input_paths(self) -> set[str]:
         refs: set[str] = set()
         for row in self.db.list_jobs(100000):
@@ -802,14 +820,17 @@ class KaggleController:
     def _gc_input_store(self) -> tuple[int, int]:
         removed = 0
         reclaimed = 0
+        journaled = (
+            set(self.db.pending_remote_deletes(100000))
+            if self.remote_store is not None else set()
+        )
         for path in unreferenced_store_files(
             self.settings.storage_root,
             referenced_paths=self._referenced_input_paths(),
         ):
             try:
-                if self.remote_store is not None:
-                    # Once no job references an input, remove the remote copy
-                    # before deleting its local cache to respect user deletion.
+                if self.remote_store is not None and str(path) not in journaled:
+                    # Once no job references an input, remove its remote copy.
                     self.remote_store.remove_file(path, self.settings.storage_root)
                 reclaimed += path.stat().st_size
                 path.unlink()
@@ -1424,6 +1445,8 @@ class KaggleController:
 
         gc_files, gc_bytes = self._gc_input_store()
         reclaimed += gc_bytes
+        # Retry pending remote deletes during manual maintenance as well.
+        self._purge_pending_remote_deletes()
         _, stale_artifacts = self.reconcile_artifacts()
         _, recoverable_jobs = self.reconcile_completed_jobs()
         expired_recovery_kernels = self.cleanup_expired_recovery_kernels()
@@ -1628,21 +1651,50 @@ class KaggleController:
                 # Local deletion must remain possible if Kaggle is offline or
                 # credentials have expired; remote cleanup is best-effort.
                 pass
+        remote_paths: list[str] = []
         if self.remote_store is not None:
-            for artifact in self.db.artifacts(job_id):
-                self.remote_store.remove_file(
-                    Path(artifact["path"]), self.settings.storage_root
-                )
+            remote_paths.extend(
+                str(Path(artifact["path"]))
+                for artifact in self.db.artifacts(job_id)
+            )
+            # Shared input blobs are content-addressed. Only delete an input
+            # from remote storage if no other job needs the same blob.
+            other_inputs: set[str] = set()
+            for other in self.db.list_jobs(100000):
+                if other.get("id") == job_id:
+                    continue
+                other_meta = other.get("meta") or {}
+                for field in ("source_image", "target_video"):
+                    if other_meta.get(field):
+                        other_inputs.add(str(Path(other_meta[field])))
+            for field in ("source_image", "target_video"):
+                source_path = meta.get(field)
+                if source_path and str(Path(source_path)) not in other_inputs:
+                    remote_paths.append(str(Path(source_path)))
+
+        # Commit deletion and remote tombstones in ONE durable database
+        # snapshot, then delete remote objects. A crash cannot resurrect a
+        # partially erased job, and offline cleanup can be retried later.
+        self.db.delete_job(job_id, remote_paths=remote_paths)
         shutil.rmtree(self.settings.storage_root / job_id, ignore_errors=True)
         self._cleanup_inputs(job_id, force=True)
         try:
             os.remove(self.settings.storage_root / "_exports" / f"{job_id}.zip")
         except OSError:
             pass
-        self.db.delete_job(job_id)
-        self._gc_input_store()
+        warning = ""
+        try:
+            self._gc_input_store()
+        except Exception:
+            warning = " Nettoyage des entrées différé."
+        _, failed = self._purge_pending_remote_deletes()
         self._storage_cache["ts"] = 0.0
-        return f"Job {job_id} supprimé du stockage local."
+        if failed:
+            warning += (
+                f" {failed} fichier(s) distant(s) en attente de suppression ; "
+                "nouvelle tentative au prochain démarrage."
+            )
+        return f"Job {job_id} supprimé de la bibliothèque." + warning
 
     def job(self, job_id: str):
         return self.db.get_job(job_id)
