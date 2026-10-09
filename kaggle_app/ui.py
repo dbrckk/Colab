@@ -346,12 +346,13 @@ def _refresh(job_id):
 def build_ui():
     hosted = bool(os.getenv("PORT"))
     persistent = controller.remote_store is not None
+    storage_provider = getattr(controller.remote_store, "backend_name", "Supabase")
     with gr.Blocks(title="Qwen Kaggle Studio") as demo:
         gr.HTML(
             "<div class='hero'><h1>Qwen Kaggle Studio</h1>"
             "<p>Crée, modifie et traite tes médias sur Kaggle GPU. "
             + (
-                "Les fichiers et les jobs sont sauvegardés dans ton bucket privé."
+                "Les fichiers et les jobs sont sauvegardés dans un stockage privé externe."
                 if persistent
                 else (
                     "Télécharge les résultats tant que la session est active."
@@ -363,9 +364,9 @@ def build_ui():
         )
         if hosted and persistent:
             gr.Markdown(
-                "**Stockage externe privé actif (Supabase).** "
+                f"**Stockage externe privé actif ({storage_provider}).** "
                 "La base SQLite, les images, les vidéos et les sources sont "
-                "sauvegardées dans un bucket privé et restaurées au besoin. "
+                "sauvegardées dans un stockage privé et restaurées au besoin. "
                 "La galerie est rechargée à la demande via **Actualiser**. "
                 "Les quotas et interruptions des offres gratuites restent applicables. "
                 "Configure tes identifiants Kaggle dans les secrets d'environnement Render."
