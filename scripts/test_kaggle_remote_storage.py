@@ -102,6 +102,11 @@ with tempfile.TemporaryDirectory() as temp:
     assert original.read_bytes() == content
     assert not list(original.parent.glob(".restore-*"))
 
+    # A pre-existing cache with the right size but wrong bytes is NOT valid.
+    original.write_bytes(b"Z" * len(content))
+    assert store.restore_file(original, media)
+    assert original.read_bytes() == content
+
     # Corrupted/missing chunks can never replace a local file with bad data.
     original.unlink()
     key = manifest["parts"][-1]["key"]
@@ -145,9 +150,13 @@ with tempfile.TemporaryDirectory() as temp:
     second_db.delete_artifacts_by_ids([second_db.artifacts("job-1")[0]["id"]])
     third_db = JobDB(root / "third.sqlite3", remote_store=db_store)
     assert third_db.artifacts("job-1") == []
-    third_db.delete_job("job-1")
+    third_db.delete_job("job-1", remote_paths=[str(original)])
     fourth_db = JobDB(root / "fourth.sqlite3", remote_store=db_store)
     assert fourth_db.get_job("job-1") is None
+    assert fourth_db.pending_remote_deletes() == [str(original)]
+    fourth_db.complete_remote_delete(str(original))
+    fifth_db = JobDB(root / "fifth.sqlite3", remote_store=db_store)
+    assert fifth_db.pending_remote_deletes() == []
 
     # Unreadable backups must fail closed, not wipe a valid live database.
     db_store.objects[DB_OBJECT] = b"broken"
