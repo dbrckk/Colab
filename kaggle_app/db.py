@@ -34,6 +34,10 @@ CREATE TABLE IF NOT EXISTS artifacts (
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_updated ON jobs(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_artifacts_job ON artifacts(job_id, created_at);
+CREATE TABLE IF NOT EXISTS pending_remote_deletes (
+    path TEXT PRIMARY KEY,
+    created_at REAL NOT NULL
+);
 """
 
 def _decode_job_row(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
@@ -168,10 +172,33 @@ class JobDB:
         return [dict(r) for r in rows]
 
 
-    def delete_job(self, job_id: str) -> None:
+    def delete_job(
+        self, job_id: str, *, remote_paths: list[str] | None = None
+    ) -> None:
+        # The remote deletion journal is committed in the same transaction as
+        # the job removal, so a crash cannot forget which files to clean up.
         with _LOCK, self._conn() as con:
+            for path in sorted(set(remote_paths or [])):
+                con.execute(
+                    "INSERT OR IGNORE INTO pending_remote_deletes(path,created_at) VALUES(?,?)",
+                    (path, time.time()),
+                )
             con.execute("DELETE FROM artifacts WHERE job_id=?", (job_id,))
             con.execute("DELETE FROM jobs WHERE id=?", (job_id,))
+            con.commit()
+            self._persist()
+
+    def pending_remote_deletes(self, limit: int = 100) -> list[str]:
+        with _LOCK, self._conn() as con:
+            rows = con.execute(
+                "SELECT path FROM pending_remote_deletes ORDER BY created_at LIMIT ?",
+                (int(limit),),
+            ).fetchall()
+        return [str(row[0]) for row in rows]
+
+    def complete_remote_delete(self, path: str) -> None:
+        with _LOCK, self._conn() as con:
+            con.execute("DELETE FROM pending_remote_deletes WHERE path=?", (path,))
             con.commit()
             self._persist()
 
