@@ -90,7 +90,37 @@ ne sont pas configurés. Les anciennes données déjà perdues lors d'un
 redémarrage ne peuvent pas être reconstituées automatiquement.
 
 
-## Stockage persistant avec Neon PostgreSQL (activation gratuite)
+## Stockage recommandé : Neon Object Storage privé (5 Go gratuits)
+
+Le projet dédié `qwen-kaggle-studio` possède maintenant un bucket
+`qwen-studio-private` **privé** dans la région Francfort. Ce stockage objet
+S3-compatible est préférable aux colonnes BYTEA de PostgreSQL pour les
+images et vidéos.
+
+Variables secrètes configurées exclusivement dans l'environnement Render :
+
+- `QWEN_NEON_S3_ENDPOINT` = endpoint HTTPS de la branche Neon
+- `QWEN_NEON_S3_ACCESS_KEY_ID` = `token_id` de la credential Neon
+- `QWEN_NEON_S3_SECRET_ACCESS_KEY` = `s3_secret_access_key` Neon
+- `QWEN_NEON_S3_REGION=eu-central-1`
+- `QWEN_NEON_S3_BUCKET=qwen-studio-private` (optionnel)
+
+La credential Neon est limitée à `storage:read` et `storage:write`
+pour la branche de ce projet. Aucune clé n'est stockée dans GitHub ni
+exposée au navigateur. Le programme vérifie le bucket privé au démarrage,
+écrit des blocs de 8 Mio, vérifie SHA-256 et restaure la bibliothèque à
+la demande ; les instantanés SQLite sont sauvegardés de la même façon.
+Ne pas activer simultanément Neon PostgreSQL et Neon S3 sans migration de
+leurs données : **Neon S3 a priorité** si les deux sont configurés.
+
+Neon Free inclut actuellement **5 Go d'Object Storage par projet** ;
+les limites de transfert/quotas du plan s'appliquent. Render Free reste
+susceptible de s'endormir : l'URL reste fixe, les fichiers sont sauvegardés
+mais aucune session d'exécution GPU ni uptime 24 h/24 ne sont garantis.
+Pour tester l'installation : ouvrir le site, générer un média, vérifier sa
+présence dans la bibliothèque, redéployer Render puis actualiser la galerie.
+
+## Stockage de secours : Neon PostgreSQL (quota réduit)
 
 Un projet Neon dédié `qwen-kaggle-studio` a été créé à Francfort, sans
 réutiliser les bases des autres applications. Le connecteur **Neon** réutilise
