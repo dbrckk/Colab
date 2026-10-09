@@ -81,6 +81,7 @@ from .kaggle_recovery import (
 )
 from .storage import import_outputs, scan_outputs
 from .remote_storage import RemoteStorage, RemoteStorageError
+from .neon_storage import NeonStorage
 
 # Backward-compatible aliases kept for existing tests/importers while the
 # implementation lives in kaggle_protocol.py.
@@ -97,7 +98,9 @@ class RemoteKernelFailed(RuntimeError):
 class KaggleController:
     def __init__(self, settings: Settings = SETTINGS):
         self.settings = settings
-        self.remote_store = RemoteStorage.from_env()
+        # Prefer the configured dedicated Neon project. Existing Supabase
+        # Storage installations keep their original backend unchanged.
+        self.remote_store = NeonStorage.from_env() or RemoteStorage.from_env()
         if self.remote_store is not None:
             self.remote_store.ensure_private_bucket()
         self.db = JobDB(settings.db_path, remote_store=self.remote_store)
