@@ -88,3 +88,36 @@ pas garanti.
 La sauvegarde externe n'est **pas active** tant que les deux secrets Supabase
 ne sont pas configurés. Les anciennes données déjà perdues lors d'un
 redémarrage ne peuvent pas être reconstituées automatiquement.
+
+
+## Stockage persistant avec Neon PostgreSQL (activation gratuite)
+
+Un projet Neon dédié `qwen-kaggle-studio` a été créé à Francfort, sans
+réutiliser les bases des autres applications. Le connecteur **Neon** réutilise
+le protocole existant de sauvegarde en blocs (SHA-256) et la restauration
+atomique de SQLite. Il suffit d'ajouter la variable secrète ci-dessous au
+service Render, puis de déclencher un déploiement volontaire.
+
+- Render Environment : `QWEN_NEON_DATABASE_URL` = URI PostgreSQL du projet
+  dédié (avec TLS, à conserver exclusivement côté serveur)
+- Optionnel : `QWEN_NEON_BUCKET=qwen-studio-private`
+- Optionnel : `QWEN_NEON_MAX_STORAGE_BYTES=536870912` (512 Mio par défaut)
+
+Au démarrage, l'application crée une table privée `qwen_private_objects`
+dans Neon. Une URL Neon valide active le stockage ; sinon, l'intégration
+Supabase existante prend le relais si elle est configurée. Les deux
+connecteurs ne doivent **pas** être activés simultanément sans migration
+préalable : chaque backend a son propre état.
+
+Le quota applicatif est plafonné à 512 Mio, pour conserver une marge par
+rapport aux limites du projet gratuit. Une longue vidéo pouvant dépasser
+ce seuil, ce backend convient surtout aux images et aux clips courts ;
+pour stocker de grosses vidéos, utiliser plus tard Supabase Storage,
+Cloudflare R2 ou un autre stockage objet dédié. Les quotas réels de Neon,
+le nombre d'objets et les éventuelles règles de suspension du plan restent
+également applicables.
+
+**À vérifier avant usage :** réaliser une génération puis redémarrer
+l'instance Render et confirmer que le job, son média et ses entrées sont
+restaurés. Les tests CI valident l'adaptateur hors ligne, pas la génération
+GPU réelle de Kaggle.
